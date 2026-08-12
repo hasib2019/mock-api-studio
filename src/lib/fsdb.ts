@@ -28,10 +28,23 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Creates `data/`, `data/projects/`, `data/endpoints/` and `data/logs/` if missing. */
+/**
+ * Creates `data/`, `data/projects/`, `data/endpoints/` and `data/logs/` if missing.
+ *
+ * On a read-only deploy (e.g. Vercel) `mkdir` fails even for a directory that
+ * already exists - the mount rejects the write syscall before it can report
+ * EEXIST. Falling back to `stat` lets reads keep working there as long as the
+ * directory shipped with the deployment; only a genuinely missing directory
+ * that cannot be created is a hard failure.
+ */
 export async function ensureDataDirs(): Promise<void> {
   for (const dir of [DATA_DIR, PROJECTS_DIR, ENDPOINTS_DIR, LOGS_DIR]) {
-    await fs.mkdir(dir, { recursive: true });
+    try {
+      await fs.mkdir(dir, { recursive: true });
+    } catch (error) {
+      const stat = await fs.stat(dir).catch(() => null);
+      if (!stat?.isDirectory()) throw error;
+    }
   }
 }
 
