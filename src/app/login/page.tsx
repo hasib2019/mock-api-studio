@@ -111,7 +111,7 @@ export default function LoginPage() {
             Default credentials:{" "}
             <span className="font-mono text-slate-500">admin</span>
             {" / "}
-            <span className="font-mono text-slate-500">admin123</span>
+            <span className="font-mono text-slate-500">Era@1234!!</span>
           </p>
         ) : null}
       </div>

@@ -28,7 +28,7 @@ Ei tool diye apni nijei ekta **nokol (mock) API** banaben — teen ta step-e:
 Er por `http://localhost:3000/api/mock/<project-slug>/<path>` e call korle asol API-r moto
 kaaj korbe: bhul payload dile 422 error list, thik payload dile registered response.
 Shob definition JSON file hishebe `data/` folder-e thake, tai git-e commit kore puro team
-share korte paren. Login: `admin` / `admin123`.
+share korte paren. Login: `admin` / `Era@1234!!`.
 
 ---
 
@@ -88,7 +88,7 @@ npm run dev
 
 Open <http://localhost:3000>. You will land on the login page.
 
-**Default login: `admin` / `admin123`.**
+**Default login: `admin` / `Era@1234!!`.**
 
 The account is created on the first run from `ADMIN_USERNAME` / `ADMIN_PASSWORD` (see below)
 and stored — password hashed with PBKDF2-SHA512 — in `data/users.json`. Change the password
@@ -127,7 +127,7 @@ Copy `.env.example` to `.env.local` and edit. Every value has a sane default for
 | --- | --- | --- |
 | `SESSION_SECRET` | built-in dev secret | HMAC key for the `mas_session` cookie (12 h TTL). **Set this in production** — otherwise the app falls back to a public development secret and warns on boot. Changing it signs everyone out. |
 | `ADMIN_USERNAME` | `admin` | Username of the first studio user, created only when `users.json` does not exist yet. |
-| `ADMIN_PASSWORD` | `admin123` | Password of that first user. Ignored once the user exists — change it from the Users page. |
+| `ADMIN_PASSWORD` | `Era@1234!!` | Password of that first user. Ignored once the user exists — change it from the Users page. |
 | `MOCK_DATA_DIR` | `./data` | Where projects, endpoints, users and logs are written. Point it at a persistent volume (or a shared folder) if you do not want the definitions inside the repo. |
 | `MOCK_LOG_RETENTION` | `500` | How many request logs to keep. Oldest entries are pruned on write. |
 
@@ -688,7 +688,7 @@ Example — script the seeding of a fresh instance:
 ```bash
 curl -c cookies.txt -X POST http://localhost:3000/api/auth/login \
   -H "content-type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
+  -d '{"username":"admin","password":"Era@1234!!"}'
 
 curl -b cookies.txt -X POST http://localhost:3000/api/admin/seed
 # {"ok":true,"data":{"projects":1,"endpoints":6}}

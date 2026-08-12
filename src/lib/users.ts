@@ -137,7 +137,7 @@ export async function ensureSeedUser(): Promise<void> {
     }
 
     const username = normalizeUsername(process.env.ADMIN_USERNAME || "admin") || "admin";
-    const password = process.env.ADMIN_PASSWORD || "admin123";
+    const password = process.env.ADMIN_PASSWORD || "Era@1234!!";
     const admin: StudioUser = {
       id: newId("us"),
       username,
