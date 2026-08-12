@@ -42,8 +42,11 @@ next-env.d.ts
 
 # mock api studio - runtime data
 # The registered definitions in /data/projects and /data/endpoints ARE meant to
-# be committed and shared with the team. Request logs are not.
-/data/logs/
+# be committed and shared with the team. Request logs are not, but the folder
+# itself must stay tracked (via .gitkeep) so it exists on read-only deploys
+# (e.g. Vercel) that cannot `mkdir` it at runtime.
+/data/logs/*
+!/data/logs/.gitkeep
 
 # local env files (the checked-in template .env.example stays tracked)
 .env*.local
