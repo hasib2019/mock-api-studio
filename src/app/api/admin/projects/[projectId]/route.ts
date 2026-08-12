@@ -6,10 +6,6 @@ import type { EndpointDef, ProjectDef } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-interface Context {
-  params: Promise<{ projectId: string }>;
-}
-
 interface ProjectDetail {
   project: ProjectDef;
   endpoints: EndpointDef[];
@@ -24,7 +20,10 @@ function headerMap(value: unknown): Record<string, string> {
   return out;
 }
 
-export async function GET(_request: NextRequest, ctx: Context): Promise<Response> {
+export async function GET(
+  _request: NextRequest,
+  ctx: RouteContext<"/api/admin/projects/[projectId]">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 
@@ -41,7 +40,10 @@ export async function GET(_request: NextRequest, ctx: Context): Promise<Response
   }
 }
 
-export async function PUT(request: NextRequest, ctx: Context): Promise<Response> {
+export async function PUT(
+  request: NextRequest,
+  ctx: RouteContext<"/api/admin/projects/[projectId]">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 
@@ -79,7 +81,10 @@ export async function PUT(request: NextRequest, ctx: Context): Promise<Response>
   }
 }
 
-export async function DELETE(_request: NextRequest, ctx: Context): Promise<Response> {
+export async function DELETE(
+  _request: NextRequest,
+  ctx: RouteContext<"/api/admin/projects/[projectId]">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 

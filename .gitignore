@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# mock api studio - runtime data
+# The registered definitions in /data/projects and /data/endpoints ARE meant to
+# be committed and shared with the team. Request logs are not.
+/data/logs/
+
+# local env files (the checked-in template .env.example stays tracked)
+.env*.local
+!.env.example

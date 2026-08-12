@@ -5,11 +5,10 @@ import { deleteEndpoint, getEndpoint, updateEndpoint } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-interface Context {
-  params: Promise<{ endpointId: string }>;
-}
-
-export async function GET(_request: NextRequest, ctx: Context): Promise<Response> {
+export async function GET(
+  _request: NextRequest,
+  ctx: RouteContext<"/api/admin/endpoints/[endpointId]">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 
@@ -23,7 +22,10 @@ export async function GET(_request: NextRequest, ctx: Context): Promise<Response
   }
 }
 
-export async function PUT(request: NextRequest, ctx: Context): Promise<Response> {
+export async function PUT(
+  request: NextRequest,
+  ctx: RouteContext<"/api/admin/endpoints/[endpointId]">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 
@@ -37,7 +39,10 @@ export async function PUT(request: NextRequest, ctx: Context): Promise<Response>
   }
 }
 
-export async function DELETE(_request: NextRequest, ctx: Context): Promise<Response> {
+export async function DELETE(
+  _request: NextRequest,
+  ctx: RouteContext<"/api/admin/endpoints/[endpointId]">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 

@@ -56,12 +56,13 @@ export interface ProjectDetailProps {
  * Helpers
  * ------------------------------------------------------------------ */
 
+const subscribeNever = (): (() => void) => () => {};
+const readOrigin = (): string => window.location.origin;
+const readServerOrigin = (): string => "";
+
+/** The browser origin, empty during SSR so the markup stays identical. */
 function useOrigin(): string {
-  const [origin, setOrigin] = React.useState("");
-  React.useEffect(() => {
-    if (typeof window !== "undefined") setOrigin(window.location.origin);
-  }, []);
-  return origin;
+  return React.useSyncExternalStore(subscribeNever, readOrigin, readServerOrigin);
 }
 
 function mockUrl(origin: string, slug: string, path = ""): string {
@@ -194,10 +195,22 @@ export function ProjectDetail({ project, endpoints }: ProjectDetailProps) {
   const router = useRouter();
   const origin = useOrigin();
 
-  const [rows, setRows] = React.useState<ProjectEndpointRow[]>(endpoints);
-  React.useEffect(() => {
-    setRows(endpoints);
-  }, [endpoints]);
+  /**
+   * Optimistic enabled/disabled flags. They are tied to the props array they
+   * were made against, so the moment fresh server data arrives they are
+   * discarded rather than masking it.
+   */
+  const [optimistic, setOptimistic] = React.useState<{
+    source: ProjectEndpointRow[];
+    map: Record<string, boolean>;
+  }>({ source: endpoints, map: {} });
+
+  const rows = React.useMemo(() => {
+    if (optimistic.source !== endpoints) return endpoints;
+    const { map } = optimistic;
+    if (Object.keys(map).length === 0) return endpoints;
+    return endpoints.map((row) => (row.id in map ? { ...row, enabled: map[row.id] } : row));
+  }, [endpoints, optimistic]);
 
   const [search, setSearch] = React.useState("");
   const [method, setMethod] = React.useState("all");
@@ -232,19 +245,32 @@ export function ProjectDetail({ project, endpoints }: ProjectDetailProps) {
     });
   }, [rows, search, method]);
 
+  function setOverride(id: string, enabled: boolean) {
+    setOptimistic((current) => ({
+      source: endpoints,
+      map: { ...(current.source === endpoints ? current.map : {}), [id]: enabled },
+    }));
+  }
+
+  function clearOverride(id: string) {
+    setOptimistic((current) => {
+      if (current.source !== endpoints) return { source: endpoints, map: {} };
+      if (!(id in current.map)) return current;
+      const map = { ...current.map };
+      delete map[id];
+      return { source: endpoints, map };
+    });
+  }
+
   async function toggleEnabled(row: ProjectEndpointRow, enabled: boolean) {
     setBusyId(row.id);
-    setRows((current) =>
-      current.map((item) => (item.id === row.id ? { ...item, enabled } : item)),
-    );
+    setOverride(row.id, enabled);
     try {
       await adminApi.updateEndpoint(row.id, { enabled });
       toast(`"${row.name}" ${enabled ? "enabled" : "disabled"}`, "success");
       router.refresh();
     } catch (err) {
-      setRows((current) =>
-        current.map((item) => (item.id === row.id ? { ...item, enabled: !enabled } : item)),
-      );
+      clearOverride(row.id);
       toast(errorMessage(err, "Could not update the endpoint"), "error");
     } finally {
       setBusyId(null);

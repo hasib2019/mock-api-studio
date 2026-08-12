@@ -5,11 +5,10 @@ import { duplicateEndpoint } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-interface Context {
-  params: Promise<{ endpointId: string }>;
-}
-
-export async function POST(_request: NextRequest, ctx: Context): Promise<Response> {
+export async function POST(
+  _request: NextRequest,
+  ctx: RouteContext<"/api/admin/endpoints/[endpointId]/duplicate">,
+): Promise<Response> {
   const session = await guard();
   if (!session) return fail("Unauthorized", 401);
 

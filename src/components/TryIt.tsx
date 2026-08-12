@@ -199,6 +199,15 @@ function buildTargetUrl(raw: string, query: Record<string, string>): string {
   return url.toString();
 }
 
+/**
+ * `window.location.origin`, read the hydration-safe way: the server snapshot is
+ * an empty origin (so the URL renders as a plain path) and the browser snapshot
+ * takes over on the first client render.
+ */
+const subscribeToNothing = () => () => undefined;
+const browserOrigin = () => window.location.origin;
+const serverOrigin = () => "";
+
 function safeTargetUrl(raw: string, query: Record<string, string>): string {
   try {
     return buildTargetUrl(raw, query);
@@ -330,7 +339,7 @@ export interface TryItProps {
 }
 
 export function TryIt({ project, endpoint }: TryItProps) {
-  const [url, setUrl] = React.useState(() => mockPathOf(project, endpoint));
+  const [urlOverride, setUrlOverride] = React.useState<string | null>(null);
   const [bodyText, setBodyText] = React.useState(() =>
     JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2),
   );
@@ -345,21 +354,19 @@ export function TryIt({ project, endpoint }: TryItProps) {
   const [sending, setSending] = React.useState(false);
   const [result, setResult] = React.useState<SendState>({ kind: "idle" });
 
+  const origin = React.useSyncExternalStore(subscribeToNothing, browserOrigin, serverOrigin);
   const mockPath = mockPathOf(project, endpoint);
+  const url = urlOverride ?? `${origin}${mockPath}`;
   const pathParams = pathParamsOf(endpoint.path);
   const sendsBody =
     endpoint.request.contentType !== "none" && METHODS_WITH_BODY.has(endpoint.method);
-
-  /* absolute URL, resolved once we are in the browser */
-  React.useEffect(() => {
-    setUrl(`${window.location.origin}${mockPath}`);
-  }, [mockPath]);
 
   /* re-seed when the console is pointed at a different endpoint */
   const lastEndpointId = React.useRef(endpoint.id);
   React.useEffect(() => {
     if (lastEndpointId.current === endpoint.id) return;
     lastEndpointId.current = endpoint.id;
+    setUrlOverride(null);
     setBodyText(JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2));
     setQuery(recordFromFields(endpoint.request.query));
     setHeaders(recordFromFields(endpoint.request.headers));
@@ -393,7 +400,7 @@ export function TryIt({ project, endpoint }: TryItProps) {
     setBodyText(JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2));
     setQuery(recordFromFields(endpoint.request.query));
     setHeaders(recordFromFields(endpoint.request.headers));
-    setUrl(`${window.location.origin}${mockPath}`);
+    setUrlOverride(null);
     setResult({ kind: "idle" });
     toast("Reset to the registered examples", "info");
   }
@@ -519,7 +526,7 @@ export function TryIt({ project, endpoint }: TryItProps) {
               mono
               spellCheck={false}
               aria-label="Mock URL"
-              onChange={(event) => setUrl(event.target.value)}
+              onChange={(event) => setUrlOverride(event.target.value)}
             />
             <CopyButton value={url} label="Copy URL" className="h-9" />
           </div>

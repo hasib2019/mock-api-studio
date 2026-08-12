@@ -276,6 +276,7 @@ export function ProjectsView({ projects, initialCreate = false }: ProjectsViewPr
       <Modal
         open={formOpen}
         onClose={closeForm}
+        wide
         title={editingId ? "Edit project" : "New project"}
         description={
           editingId
