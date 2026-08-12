@@ -1,0 +1,158 @@
+{
+  "id": "ep_msq38nju2g3gpht1",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "Send OTP",
+  "description": "Sends a 6-digit one-time password to the customer's mobile number and returns the otpId that /otp/verify expects.",
+  "method": "POST",
+  "path": "/otp/send",
+  "enabled": true,
+  "auth": {
+    "type": "apiKey",
+    "headerName": "x-api-key",
+    "token": "sandbox-demo-key"
+  },
+  "request": {
+    "contentType": "application/json",
+    "body": [
+      {
+        "id": "f_msq38njumwhhey5p",
+        "name": "mobile",
+        "label": "Mobile number",
+        "type": "string",
+        "required": true,
+        "description": "11-digit Bangladeshi mobile number the OTP is sent to.",
+        "example": "01712345678",
+        "rules": [
+          {
+            "id": "r_msq38njuudjnkstg",
+            "rule": "pattern",
+            "value": "^01[3-9]\\d{8}$",
+            "enabled": true,
+            "message": "mobile must be a valid Bangladeshi mobile number"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njuteufiv9a",
+        "name": "purpose",
+        "label": "Purpose",
+        "type": "string",
+        "required": false,
+        "description": "What the OTP authorises. Defaults to TRANSACTION.",
+        "example": "TRANSACTION",
+        "defaultValue": "TRANSACTION",
+        "rules": [
+          {
+            "id": "r_msq38njuqdajs7nc",
+            "rule": "enum",
+            "value": [
+              "LOGIN",
+              "TRANSACTION",
+              "REGISTRATION"
+            ],
+            "enabled": true,
+            "message": "purpose must be one of: {arg}"
+          }
+        ],
+        "children": []
+      }
+    ],
+    "query": [],
+    "headers": [],
+    "allowUnknownFields": true,
+    "validationMode": "collectAll"
+  },
+  "scenarios": [
+    {
+      "id": "s_msq38njuzxty1dyi",
+      "name": "Throttled",
+      "description": "Too many OTPs were requested for this mobile number.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njupzquho4s",
+          "source": "body",
+          "path": "mobile",
+          "operator": "eq",
+          "value": "01700000000"
+        }
+      ],
+      "status": 429,
+      "headers": {
+        "retry-after": "300"
+      },
+      "body": {
+        "status": "FAILED",
+        "responseCode": "OTP_LIMIT_EXCEEDED",
+        "message": "Too many OTP requests. Try again after 5 minutes",
+        "data": {
+          "mobile": "{{body.mobile}}",
+          "retryAfterSeconds": 300
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njuzialp4yr",
+      "name": "OTP sent",
+      "description": "Default response: the OTP was handed to the SMS gateway.",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "OTP_SENT",
+        "message": "OTP has been sent to the registered mobile number",
+        "data": {
+          "otpId": "{{uuid}}",
+          "mobile": "{{body.mobile}}",
+          "purpose": "{{body.purpose}}",
+          "expiresInSeconds": 120,
+          "attemptsAllowed": 3,
+          "sentAt": "{{now}}"
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "VALIDATION_ERROR",
+      "message": "Request validation failed",
+      "errorCount": "{{errorCount}}",
+      "errors": "{{errors}}",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "UNAUTHORIZED",
+      "message": "Missing or invalid credentials",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "delayMs": 0,
+  "tags": [
+    "otp",
+    "security"
+  ],
+  "notes": "Mobile 01700000000 always answers OTP_LIMIT_EXCEEDED.",
+  "createdAt": "2026-08-12T12:51:18.714Z",
+  "updatedAt": "2026-08-12T12:51:18.714Z"
+}

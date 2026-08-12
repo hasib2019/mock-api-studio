@@ -1,0 +1,13 @@
+{
+  "id": "pr_msq38nj9kfkpfifu",
+  "name": "Core Banking Sandbox",
+  "slug": "core-banking",
+  "description": "A faithful stand-in for the core banking / NPSB APIs: fund transfer, balance enquiry, NID verification, OTP and transaction history. Use it to build and test integrations before production access is granted.",
+  "defaultHeaders": {
+    "x-sandbox": "core-banking",
+    "cache-control": "no-store"
+  },
+  "color": "#2563eb",
+  "createdAt": "2026-08-12T12:51:18.694Z",
+  "updatedAt": "2026-08-12T12:51:18.694Z"
+}

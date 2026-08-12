@@ -1,0 +1,190 @@
+{
+  "id": "ep_msq38njhc3nwb3hp",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "NID Verification",
+  "description": "Verifies a customer against the national ID database. Shows a custom rule (an NID is 10, 13 or 17 digits) and an age check driven by the date of birth.",
+  "method": "POST",
+  "path": "/customer/nid-verify",
+  "enabled": true,
+  "auth": {
+    "type": "bearer",
+    "token": "sandbox-demo-token"
+  },
+  "request": {
+    "contentType": "application/json",
+    "body": [
+      {
+        "id": "f_msq38njhazfjq0d6",
+        "name": "nid",
+        "label": "National ID number",
+        "type": "string",
+        "required": true,
+        "description": "Old (10 or 13 digit) or smart-card (17 digit) national ID number.",
+        "example": "1990123456789",
+        "rules": [
+          {
+            "id": "r_msq38njhzg6u12fg",
+            "rule": "numericString",
+            "enabled": true,
+            "message": "nid may contain digits only"
+          },
+          {
+            "id": "r_msq38njhrrpqpq1y",
+            "rule": "custom",
+            "value": "value.length === 10 || value.length === 13 || value.length === 17",
+            "enabled": true,
+            "message": "nid must be 10, 13 or 17 digits long"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njhv30sa8e3",
+        "name": "dateOfBirth",
+        "label": "Date of birth",
+        "type": "string",
+        "required": true,
+        "description": "Date of birth as printed on the NID, in YYYY-MM-DD form.",
+        "example": "1990-04-17",
+        "rules": [
+          {
+            "id": "r_msq38njhzjrc7850",
+            "rule": "dateFormat",
+            "value": "YYYY-MM-DD",
+            "enabled": true,
+            "message": "dateOfBirth must use the format YYYY-MM-DD"
+          },
+          {
+            "id": "r_msq38njhim5m4d4u",
+            "rule": "minAge",
+            "value": 18,
+            "enabled": true,
+            "message": "The customer must be at least 18 years old"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njhvev4850t",
+        "name": "name",
+        "label": "Full name",
+        "type": "string",
+        "required": true,
+        "description": "Full name in English, exactly as printed on the NID.",
+        "example": "Rahim Uddin",
+        "rules": [
+          {
+            "id": "r_msq38njh0tl4x5cg",
+            "rule": "minLength",
+            "value": 3,
+            "enabled": true,
+            "message": "name must be at least 3 characters"
+          }
+        ],
+        "children": []
+      }
+    ],
+    "query": [],
+    "headers": [],
+    "allowUnknownFields": true,
+    "validationMode": "collectAll"
+  },
+  "scenarios": [
+    {
+      "id": "s_msq38njhmam3ijr6",
+      "name": "NID mismatch",
+      "description": "The submitted details do not match the national ID record.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njh8pwss8wk",
+          "source": "body",
+          "path": "nid",
+          "operator": "eq",
+          "value": "1234567890"
+        }
+      ],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "FAILED",
+        "responseCode": "NID_MISMATCH",
+        "message": "The submitted details do not match the national ID record",
+        "data": {
+          "nid": "{{body.nid}}",
+          "verified": false,
+          "mismatchedFields": [
+            "name",
+            "dateOfBirth"
+          ]
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njhaoiaw0xd",
+      "name": "Verified",
+      "description": "Default response: the NID record matches the submitted details.",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "NID_VERIFIED",
+        "message": "National ID verified successfully",
+        "data": {
+          "verified": true,
+          "nid": "{{body.nid}}",
+          "name": "{{body.name}}",
+          "dateOfBirth": "{{body.dateOfBirth}}",
+          "fatherName": "Karim Uddin",
+          "motherName": "Ayesha Begum",
+          "gender": "MALE",
+          "permanentAddress": "House 12, Road 5, Dhanmondi, Dhaka-1205",
+          "verificationId": "{{uuid}}",
+          "verifiedAt": "{{now}}"
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "VALIDATION_ERROR",
+      "message": "Request validation failed",
+      "errorCount": "{{errorCount}}",
+      "errors": "{{errors}}",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "UNAUTHORIZED",
+      "message": "Missing or invalid credentials",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "delayMs": 0,
+  "tags": [
+    "kyc",
+    "customer"
+  ],
+  "notes": "Bearer token: sandbox-demo-token. NID 1234567890 always answers NID_MISMATCH.",
+  "createdAt": "2026-08-12T12:51:18.712Z",
+  "updatedAt": "2026-08-12T12:51:18.712Z"
+}

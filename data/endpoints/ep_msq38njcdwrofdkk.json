@@ -1,0 +1,393 @@
+{
+  "id": "ep_msq38njcdwrofdkk",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "Fund Transfer",
+  "description": "Debits the sender's account and credits a beneficiary account. Mirrors the NPSB single-transfer contract: 13-digit account numbers, a 2-decimal amount and an idempotency header.",
+  "method": "POST",
+  "path": "/fund-transfer",
+  "enabled": true,
+  "auth": {
+    "type": "apiKey",
+    "headerName": "x-api-key",
+    "token": "sandbox-demo-key"
+  },
+  "request": {
+    "contentType": "application/json",
+    "body": [
+      {
+        "id": "f_msq38njc4w1g970o",
+        "name": "fromAccount",
+        "label": "Debit account",
+        "type": "string",
+        "required": true,
+        "description": "13-digit account number the money is taken from.",
+        "example": "1010000000002",
+        "rules": [
+          {
+            "id": "r_msq38njc03n1qim3",
+            "rule": "exactLength",
+            "value": 13,
+            "enabled": true,
+            "message": "fromAccount must be exactly 13 digits"
+          },
+          {
+            "id": "r_msq38njcorjg2glz",
+            "rule": "numericString",
+            "enabled": true,
+            "message": "fromAccount may contain digits only"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njctbsjibv3",
+        "name": "toAccount",
+        "label": "Credit account",
+        "type": "string",
+        "required": true,
+        "description": "13-digit beneficiary account number. Must differ from fromAccount.",
+        "example": "2020000000009",
+        "rules": [
+          {
+            "id": "r_msq38njcu9yaw7jw",
+            "rule": "exactLength",
+            "value": 13,
+            "enabled": true,
+            "message": "toAccount must be exactly 13 digits"
+          },
+          {
+            "id": "r_msq38njc3mwvwzu4",
+            "rule": "numericString",
+            "enabled": true,
+            "message": "toAccount may contain digits only"
+          },
+          {
+            "id": "r_msq38njchugac1za",
+            "rule": "notEqualsField",
+            "value": "fromAccount",
+            "enabled": true,
+            "message": "toAccount must be different from fromAccount"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njc79qoxoh5",
+        "name": "amount",
+        "label": "Amount",
+        "type": "number",
+        "required": true,
+        "description": "Transfer amount in the given currency. Two decimal places at most.",
+        "example": 12500.5,
+        "rules": [
+          {
+            "id": "r_msq38njc0zew5tij",
+            "rule": "min",
+            "value": 10,
+            "enabled": true,
+            "message": "amount must be at least 10.00"
+          },
+          {
+            "id": "r_msq38njc53rkzmte",
+            "rule": "max",
+            "value": 500000,
+            "enabled": true,
+            "message": "amount may not exceed 500000.00 per transaction"
+          },
+          {
+            "id": "r_msq38njceg4oeerh",
+            "rule": "maxDecimals",
+            "value": 2,
+            "enabled": true,
+            "message": "amount may have at most 2 decimal places"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njc0yj1xjk0",
+        "name": "currency",
+        "label": "Currency",
+        "type": "string",
+        "required": true,
+        "description": "ISO 4217 currency code. The sandbox settles BDT and USD only.",
+        "example": "BDT",
+        "rules": [
+          {
+            "id": "r_msq38njczz3vgx4w",
+            "rule": "enum",
+            "value": [
+              "BDT",
+              "USD"
+            ],
+            "enabled": true,
+            "message": "currency must be one of: {arg}"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njcbqh0o9sb",
+        "name": "purpose",
+        "label": "Purpose of transfer",
+        "type": "string",
+        "required": true,
+        "description": "Regulatory purpose code attached to the transaction.",
+        "example": "SALARY",
+        "rules": [
+          {
+            "id": "r_msq38njc26x3exka",
+            "rule": "enum",
+            "value": [
+              "SALARY",
+              "BILL",
+              "PERSONAL",
+              "BUSINESS"
+            ],
+            "enabled": true,
+            "message": "purpose must be one of: {arg}"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njccg4a8xbd",
+        "name": "remarks",
+        "label": "Remarks",
+        "type": "string",
+        "required": false,
+        "description": "Free-text note shown on the beneficiary's statement.",
+        "example": "August salary",
+        "rules": [
+          {
+            "id": "r_msq38njcpxrjr3qw",
+            "rule": "maxLength",
+            "value": 120,
+            "enabled": true,
+            "message": "remarks may not exceed 120 characters"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njcwou9mfbt",
+        "name": "beneficiary",
+        "label": "Beneficiary",
+        "type": "object",
+        "required": true,
+        "description": "Who is being paid. The core matches this against the credit account.",
+        "rules": [],
+        "children": [
+          {
+            "id": "f_msq38njc323dbhow",
+            "name": "name",
+            "label": "Beneficiary name",
+            "type": "string",
+            "required": true,
+            "description": "Name as registered with the beneficiary bank.",
+            "example": "Rahim Uddin",
+            "rules": [
+              {
+                "id": "r_msq38njcjjsu7v80",
+                "rule": "minLength",
+                "value": 3,
+                "enabled": true,
+                "message": "beneficiary.name must be at least 3 characters"
+              }
+            ],
+            "children": []
+          },
+          {
+            "id": "f_msq38njcy3bjbles",
+            "name": "mobile",
+            "label": "Beneficiary mobile",
+            "type": "string",
+            "required": true,
+            "description": "Bangladeshi mobile number used for the credit SMS alert.",
+            "example": "01712345678",
+            "rules": [
+              {
+                "id": "r_msq38njcpqzf1dsd",
+                "rule": "pattern",
+                "value": "^01[3-9]\\d{8}$",
+                "enabled": true,
+                "message": "beneficiary.mobile must be a valid Bangladeshi mobile number"
+              }
+            ],
+            "children": []
+          },
+          {
+            "id": "f_msq38njcrcsreh2d",
+            "name": "bankCode",
+            "label": "Beneficiary bank code",
+            "type": "string",
+            "required": true,
+            "description": "6-character clearing code of the beneficiary bank.",
+            "example": "BRAKBD",
+            "rules": [
+              {
+                "id": "r_msq38njcyszo5o5o",
+                "rule": "exactLength",
+                "value": 6,
+                "enabled": true,
+                "message": "beneficiary.bankCode must be exactly 6 characters"
+              }
+            ],
+            "children": []
+          }
+        ]
+      }
+    ],
+    "query": [],
+    "headers": [
+      {
+        "id": "f_msq38njcqbcy88rp",
+        "name": "x-request-id",
+        "label": "Request id",
+        "type": "string",
+        "required": true,
+        "description": "Caller-generated UUID v4. Echoed back so you can correlate logs.",
+        "example": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+        "rules": [
+          {
+            "id": "r_msq38njcdpzpsj6v",
+            "rule": "uuid",
+            "enabled": true,
+            "message": "x-request-id must be a valid UUID"
+          }
+        ],
+        "children": []
+      }
+    ],
+    "allowUnknownFields": false,
+    "validationMode": "collectAll"
+  },
+  "scenarios": [
+    {
+      "id": "s_msq38njchesfic2o",
+      "name": "Limit exceeded",
+      "description": "The single-transaction ceiling of the sandbox is 100,000.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njcyj2emm1x",
+          "source": "body",
+          "path": "amount",
+          "operator": "gt",
+          "value": 100000
+        }
+      ],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "FAILED",
+        "responseCode": "TXN_LIMIT_EXCEEDED",
+        "message": "Transaction amount exceeds the per-transaction limit",
+        "data": {
+          "requestedAmount": "{{body.amount}}",
+          "perTransactionLimit": 100000,
+          "currency": "{{body.currency}}"
+        },
+        "requestId": "{{headers.x-request-id}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njcs54oktb1",
+      "name": "Insufficient balance",
+      "description": "Account 1010000000001 is seeded with an empty balance.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njchr3yh2em",
+          "source": "body",
+          "path": "fromAccount",
+          "operator": "eq",
+          "value": "1010000000001"
+        }
+      ],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "FAILED",
+        "responseCode": "INSUFFICIENT_BALANCE",
+        "message": "The debit account does not have sufficient balance",
+        "data": {
+          "fromAccount": "{{body.fromAccount}}",
+          "requestedAmount": "{{body.amount}}",
+          "availableBalance": 0
+        },
+        "requestId": "{{headers.x-request-id}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njczzn96l44",
+      "name": "Success",
+      "description": "Default response: the transfer is accepted and settled instantly.",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "TXN_SUCCESS",
+        "message": "Fund transfer completed successfully",
+        "data": {
+          "transactionId": "{{randomDigits(12)}}",
+          "referenceNo": "NPSB{{randomDigits(8)}}",
+          "fromAccount": "{{body.fromAccount}}",
+          "toAccount": "{{body.toAccount}}",
+          "beneficiaryName": "{{body.beneficiary.name}}",
+          "amount": "{{body.amount}}",
+          "currency": "{{body.currency}}",
+          "charge": 0,
+          "purpose": "{{body.purpose}}",
+          "remarks": "{{body.remarks || \"N/A\"}}",
+          "settlementStatus": "SETTLED",
+          "processedAt": "{{now}}"
+        },
+        "requestId": "{{headers.x-request-id}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "VALIDATION_ERROR",
+      "message": "Request validation failed",
+      "errorCount": "{{errorCount}}",
+      "errors": "{{errors}}",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "UNAUTHORIZED",
+      "message": "Missing or invalid credentials",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "delayMs": 0,
+  "tags": [
+    "payments",
+    "npsb"
+  ],
+  "notes": "Send amount > 100000 to see the limit response, or fromAccount 1010000000001 to see the insufficient-balance response.",
+  "createdAt": "2026-08-12T12:51:18.697Z",
+  "updatedAt": "2026-08-12T12:51:18.697Z"
+}

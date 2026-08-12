@@ -1,0 +1,175 @@
+{
+  "id": "ep_msq38njwmmfernlj",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "Verify OTP",
+  "description": "Verifies the 6-digit OTP that /otp/send issued and returns a short-lived authorisation token.",
+  "method": "POST",
+  "path": "/otp/verify",
+  "enabled": true,
+  "auth": {
+    "type": "apiKey",
+    "headerName": "x-api-key",
+    "token": "sandbox-demo-key"
+  },
+  "request": {
+    "contentType": "application/json",
+    "body": [
+      {
+        "id": "f_msq38njv2fdr1wgl",
+        "name": "mobile",
+        "label": "Mobile number",
+        "type": "string",
+        "required": true,
+        "description": "The mobile number the OTP was sent to.",
+        "example": "01712345678",
+        "rules": [
+          {
+            "id": "r_msq38njvwxqjuick",
+            "rule": "pattern",
+            "value": "^01[3-9]\\d{8}$",
+            "enabled": true,
+            "message": "mobile must be a valid Bangladeshi mobile number"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njvichdt9ql",
+        "name": "otpId",
+        "label": "OTP id",
+        "type": "string",
+        "required": false,
+        "description": "The otpId returned by /otp/send.",
+        "example": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+        "rules": [
+          {
+            "id": "r_msq38njvyv2cpqo8",
+            "rule": "uuid",
+            "enabled": true,
+            "message": "otpId must be a valid UUID"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njvvu6un575",
+        "name": "otp",
+        "label": "One-time password",
+        "type": "string",
+        "required": true,
+        "description": "The 6-digit code the customer received.",
+        "example": "483920",
+        "rules": [
+          {
+            "id": "r_msq38njvrsrmrvkd",
+            "rule": "exactLength",
+            "value": 6,
+            "enabled": true,
+            "message": "otp must be exactly 6 digits"
+          },
+          {
+            "id": "r_msq38njvwo8jsqwc",
+            "rule": "numericString",
+            "enabled": true,
+            "message": "otp may contain digits only"
+          }
+        ],
+        "children": []
+      }
+    ],
+    "query": [],
+    "headers": [],
+    "allowUnknownFields": true,
+    "validationMode": "collectAll"
+  },
+  "scenarios": [
+    {
+      "id": "s_msq38njv87v8462b",
+      "name": "Wrong OTP",
+      "description": "The code does not match the one that was issued.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njv7r0vcwg7",
+          "source": "body",
+          "path": "otp",
+          "operator": "eq",
+          "value": "000000"
+        }
+      ],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "FAILED",
+        "responseCode": "OTP_INVALID",
+        "message": "The OTP you entered is incorrect",
+        "data": {
+          "mobile": "{{body.mobile}}",
+          "verified": false,
+          "remainingAttempts": 2
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njwd0wj8wt8",
+      "name": "OTP verified",
+      "description": "Default response: the code matches and a session token is issued.",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "OTP_VERIFIED",
+        "message": "OTP verified successfully",
+        "data": {
+          "mobile": "{{body.mobile}}",
+          "verified": true,
+          "authToken": "{{randomString(32)}}",
+          "expiresInSeconds": 600,
+          "verifiedAt": "{{now}}"
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "VALIDATION_ERROR",
+      "message": "Request validation failed",
+      "errorCount": "{{errorCount}}",
+      "errors": "{{errors}}",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "UNAUTHORIZED",
+      "message": "Missing or invalid credentials",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "delayMs": 0,
+  "tags": [
+    "otp",
+    "security"
+  ],
+  "notes": "OTP 000000 always answers OTP_INVALID.",
+  "createdAt": "2026-08-12T12:51:18.716Z",
+  "updatedAt": "2026-08-12T12:51:18.716Z"
+}

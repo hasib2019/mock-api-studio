@@ -1,0 +1,251 @@
+{
+  "id": "ep_msq38njy73mgoy4t",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "Transaction History",
+  "description": "Paginated statement lines. Every query parameter is validated and coerced, so ?page=abc is rejected while ?page=2 arrives as the number 2.",
+  "method": "GET",
+  "path": "/transactions",
+  "enabled": true,
+  "auth": {
+    "type": "apiKey",
+    "headerName": "x-api-key",
+    "token": "sandbox-demo-key"
+  },
+  "request": {
+    "contentType": "none",
+    "body": [],
+    "query": [
+      {
+        "id": "f_msq38njymuu5ijs3",
+        "name": "page",
+        "label": "Page",
+        "type": "integer",
+        "required": false,
+        "description": "1-based page number.",
+        "example": 1,
+        "defaultValue": 1,
+        "rules": [
+          {
+            "id": "r_msq38njyehrgqi71",
+            "rule": "min",
+            "value": 1,
+            "enabled": true,
+            "message": "page must be 1 or greater"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njynicklp30",
+        "name": "limit",
+        "label": "Page size",
+        "type": "integer",
+        "required": false,
+        "description": "Rows per page, at most 100.",
+        "example": 20,
+        "defaultValue": 20,
+        "rules": [
+          {
+            "id": "r_msq38njyp3hg4i1k",
+            "rule": "min",
+            "value": 1,
+            "enabled": true,
+            "message": "limit must be 1 or greater"
+          },
+          {
+            "id": "r_msq38njy45dckhxg",
+            "rule": "max",
+            "value": 100,
+            "enabled": true,
+            "message": "limit may not exceed 100"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njyi9nqdbkb",
+        "name": "from",
+        "label": "From date",
+        "type": "string",
+        "required": false,
+        "description": "Start of the statement window, YYYY-MM-DD.",
+        "example": "2026-08-01",
+        "rules": [
+          {
+            "id": "r_msq38njynz41ka6t",
+            "rule": "dateFormat",
+            "value": "YYYY-MM-DD",
+            "enabled": true,
+            "message": "from must use the format YYYY-MM-DD"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njyr1ni677m",
+        "name": "to",
+        "label": "To date",
+        "type": "string",
+        "required": false,
+        "description": "End of the statement window, YYYY-MM-DD.",
+        "example": "2026-08-12",
+        "rules": [
+          {
+            "id": "r_msq38njy9w0g8t1k",
+            "rule": "dateFormat",
+            "value": "YYYY-MM-DD",
+            "enabled": true,
+            "message": "to must use the format YYYY-MM-DD"
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "f_msq38njy3o2gqeq6",
+        "name": "status",
+        "label": "Status filter",
+        "type": "string",
+        "required": false,
+        "description": "Only return transactions in this state.",
+        "example": "SUCCESS",
+        "rules": [
+          {
+            "id": "r_msq38njywo0r38sc",
+            "rule": "enum",
+            "value": [
+              "SUCCESS",
+              "FAILED",
+              "PENDING"
+            ],
+            "enabled": true,
+            "message": "status must be one of: {arg}"
+          }
+        ],
+        "children": []
+      }
+    ],
+    "headers": [],
+    "allowUnknownFields": true,
+    "validationMode": "collectAll"
+  },
+  "scenarios": [
+    {
+      "id": "s_msq38njyji5uzjhi",
+      "name": "Empty page",
+      "description": "No failed transactions in the sandbox - handy for empty-state testing.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njycwvioiql",
+          "source": "query",
+          "path": "status",
+          "operator": "eq",
+          "value": "FAILED"
+        }
+      ],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "0000",
+        "message": "No transactions found for the given filter",
+        "data": {
+          "page": "{{query.page}}",
+          "limit": "{{query.limit}}",
+          "total": 0,
+          "totalPages": 0,
+          "items": []
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njykzkcgeck",
+      "name": "Statement page",
+      "description": "Default response: one page of statement lines.",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "0000",
+        "message": "Transaction history fetched successfully",
+        "data": {
+          "page": "{{query.page}}",
+          "limit": "{{query.limit}}",
+          "total": 137,
+          "totalPages": 7,
+          "filter": {
+            "from": "{{query.from || \"2026-08-01\"}}",
+            "to": "{{query.to || \"2026-08-12\"}}",
+            "status": "{{query.status || \"ALL\"}}"
+          },
+          "items": [
+            {
+              "transactionId": "{{randomDigits(12)}}",
+              "type": "DEBIT",
+              "channel": "NPSB",
+              "amount": "{{randomDecimal(100,25000,2)}}",
+              "currency": "BDT",
+              "counterparty": "Rahim Uddin",
+              "counterpartyAccount": "2020000000009",
+              "status": "SUCCESS",
+              "postedAt": "{{now}}"
+            },
+            {
+              "transactionId": "{{randomDigits(12)}}",
+              "type": "CREDIT",
+              "channel": "BEFTN",
+              "amount": "{{randomDecimal(100,25000,2)}}",
+              "currency": "BDT",
+              "counterparty": "Era Infotech Ltd",
+              "counterpartyAccount": "3030000000004",
+              "status": "{{pick(\"SUCCESS\",\"PENDING\")}}",
+              "postedAt": "{{now}}"
+            }
+          ]
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "VALIDATION_ERROR",
+      "message": "Request validation failed",
+      "errorCount": "{{errorCount}}",
+      "errors": "{{errors}}",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "UNAUTHORIZED",
+      "message": "Missing or invalid credentials",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "delayMs": 0,
+  "tags": [
+    "accounts",
+    "reporting"
+  ],
+  "notes": "status=FAILED returns an empty page so you can test empty-state rendering.",
+  "createdAt": "2026-08-12T12:51:18.718Z",
+  "updatedAt": "2026-08-12T12:51:18.718Z"
+}

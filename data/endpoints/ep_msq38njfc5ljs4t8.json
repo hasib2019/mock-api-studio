@@ -1,0 +1,135 @@
+{
+  "id": "ep_msq38njfc5ljs4t8",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "Account Balance Enquiry",
+  "description": "Returns the available and ledger balance of a CASA account. The account number is a path parameter and is echoed back in the response.",
+  "method": "GET",
+  "path": "/accounts/:accountNumber/balance",
+  "enabled": true,
+  "auth": {
+    "type": "none"
+  },
+  "request": {
+    "contentType": "none",
+    "body": [],
+    "query": [
+      {
+        "id": "f_msq38njfizo9kwtt",
+        "name": "currency",
+        "label": "Currency",
+        "type": "string",
+        "required": false,
+        "description": "Optional currency wallet to report. Defaults to BDT.",
+        "example": "BDT",
+        "rules": [
+          {
+            "id": "r_msq38njftav9r6u3",
+            "rule": "enum",
+            "value": [
+              "BDT",
+              "USD"
+            ],
+            "enabled": true,
+            "message": "currency must be one of: {arg}"
+          }
+        ],
+        "children": []
+      }
+    ],
+    "headers": [],
+    "allowUnknownFields": true,
+    "validationMode": "collectAll"
+  },
+  "scenarios": [
+    {
+      "id": "s_msq38njf6or0scwn",
+      "name": "Account not found",
+      "description": "The core has no record of this account number.",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c_msq38njfnjpw49pr",
+          "source": "path",
+          "path": "accountNumber",
+          "operator": "eq",
+          "value": "0000000000000"
+        }
+      ],
+      "status": 404,
+      "headers": {},
+      "body": {
+        "status": "FAILED",
+        "responseCode": "ACCOUNT_NOT_FOUND",
+        "message": "No account exists for the given account number",
+        "data": {
+          "accountNumber": "{{path.accountNumber}}"
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    },
+    {
+      "id": "s_msq38njfyn17gjx5",
+      "name": "Active account",
+      "description": "Default response: a healthy savings account with a random balance.",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": {
+        "status": "SUCCESS",
+        "responseCode": "0000",
+        "message": "Balance enquiry successful",
+        "data": {
+          "accountNumber": "{{path.accountNumber}}",
+          "accountTitle": "Rahim Uddin",
+          "accountType": "SAVINGS",
+          "branch": "Gulshan Corporate Branch",
+          "currency": "{{query.currency || \"BDT\"}}",
+          "availableBalance": "{{randomDecimal(1000,900000,2)}}",
+          "ledgerBalance": "{{randomDecimal(1000,900000,2)}}",
+          "holdAmount": 0,
+          "accountStatus": "ACTIVE",
+          "asOf": "{{now}}"
+        },
+        "requestId": "{{uuid}}",
+        "timestamp": "{{now}}"
+      },
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "VALIDATION_ERROR",
+      "message": "Request validation failed",
+      "errorCount": "{{errorCount}}",
+      "errors": "{{errors}}",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "status": "FAILED",
+      "responseCode": "UNAUTHORIZED",
+      "message": "Missing or invalid credentials",
+      "requestId": "{{uuid}}",
+      "timestamp": "{{now}}"
+    }
+  },
+  "delayMs": 0,
+  "tags": [
+    "accounts"
+  ],
+  "notes": "Call it with 0000000000000 to see the not-found response.",
+  "createdAt": "2026-08-12T12:51:18.700Z",
+  "updatedAt": "2026-08-12T12:51:18.700Z"
+}
