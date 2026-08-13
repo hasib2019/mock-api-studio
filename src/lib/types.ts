@@ -131,6 +131,10 @@ export const CONTENT_TYPES = [
   "application/json",
   "application/x-www-form-urlencoded",
   "none",
+  "text/xml",
+  "application/soap+xml",
+  "application/xml",
+  "text/plain",
 ] as const;
 
 export type ContentType = (typeof CONTENT_TYPES)[number];
@@ -147,6 +151,13 @@ export interface RequestSpec {
   allowUnknownFields: boolean;
   /** collect every error at once (default) or stop at the first */
   validationMode: ValidationMode;
+  /**
+   * Example request body for a non-structured content type (SOAP/XML/plain
+   * text, ...), where there is no FieldDef tree to derive one from. Ignored
+   * by the runtime; only feeds the builder's preview/curl sample, Try-It's
+   * seeded body and the OpenAPI/Postman exporters.
+   */
+  sampleBody?: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -249,6 +260,8 @@ export interface EndpointDef {
   enabled: boolean;
   auth: AuthSpec;
   request: RequestSpec;
+  /** content type the runtime renders scenario/error bodies as. */
+  responseContentType: ContentType;
   scenarios: ResponseScenario[];
   validationError: ErrorTemplate;
   authError: ErrorTemplate;
@@ -363,7 +376,8 @@ export interface SessionPayload {
  * ------------------------------------------------------------------ */
 
 export interface TemplateContext {
-  body: Record<string, unknown>;
+  /** a raw string for a non-structured (e.g. SOAP/XML) request body */
+  body: Record<string, unknown> | string;
   query: Record<string, unknown>;
   headers: Record<string, string>;
   path: Record<string, string>;

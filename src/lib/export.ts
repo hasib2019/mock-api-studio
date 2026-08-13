@@ -11,9 +11,11 @@
  * functions can be used from a route handler or from a server component.
  */
 
+import { isStructuredContentType } from "@/lib/content-type";
 import { uuid } from "@/lib/ids";
 import type {
   AuthSpec,
+  ContentType,
   EndpointDef,
   FieldDef,
   FieldType,
@@ -80,6 +82,7 @@ function hasRequestBody(endpoint: EndpointDef): boolean {
   if (endpoint.method === "GET" || endpoint.method === "HEAD" || endpoint.method === "OPTIONS") {
     return false;
   }
+  if (!isStructuredContentType(endpoint.request.contentType)) return true;
   return endpoint.request.body.length > 0;
 }
 
@@ -587,7 +590,7 @@ function responsesObject(endpoint: EndpointDef): Record<string, unknown> {
 
     const response: Record<string, unknown> = {
       description: bucket.descriptions.join(" / ") || `HTTP ${status}`,
-      content: { "application/json": media },
+      content: { [endpoint.responseContentType]: media },
     };
 
     const headerNames = Object.keys(bucket.headers);
@@ -609,6 +612,16 @@ function responsesObject(endpoint: EndpointDef): Record<string, unknown> {
 function requestBodyObject(endpoint: EndpointDef): Record<string, unknown> | null {
   if (!hasRequestBody(endpoint)) return null;
   const spec: RequestSpec = endpoint.request;
+
+  if (!isStructuredContentType(spec.contentType)) {
+    return {
+      required: true,
+      content: {
+        [spec.contentType]: { schema: { type: "string" }, example: spec.sampleBody ?? "" },
+      },
+    };
+  }
+
   const schema = {
     ...fieldsToJsonSchema(spec.body),
     additionalProperties: spec.allowUnknownFields,
@@ -735,8 +748,29 @@ function postmanAuth(auth: AuthSpec): Record<string, unknown> | null {
   }
 }
 
+/** Postman's raw-body syntax highlighter language for a non-structured content type. */
+function postmanRawLanguage(contentType: ContentType): string {
+  switch (contentType) {
+    case "text/xml":
+    case "application/soap+xml":
+    case "application/xml":
+      return "xml";
+    default:
+      return "text";
+  }
+}
+
 function postmanBody(endpoint: EndpointDef): Record<string, unknown> | null {
   if (!hasRequestBody(endpoint)) return null;
+
+  if (!isStructuredContentType(endpoint.request.contentType)) {
+    return {
+      mode: "raw",
+      raw: endpoint.request.sampleBody ?? "",
+      options: { raw: { language: postmanRawLanguage(endpoint.request.contentType) } },
+    };
+  }
+
   const sample = sampleObject(endpoint.request.body);
 
   if (endpoint.request.contentType === "application/x-www-form-urlencoded") {

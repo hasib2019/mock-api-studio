@@ -15,6 +15,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
+import { isStructuredContentType } from "@/lib/content-type";
 import {
   defaultAuthError,
   defaultRequestSpec,
@@ -131,6 +132,20 @@ function safeStringify(value: unknown): string {
   }
 }
 
+/**
+ * Serialises a rendered body for a non-structured (XML/plain text/...)
+ * response. A raw template (the common case) already rendered to a string;
+ * an object/array only shows up here if a `{{body}}`-only template was fed a
+ * structured request context (e.g. a JSON-in/XML-out bridge), so fall back
+ * to JSON text rather than the useless `"[object Object]"` from `String()`.
+ */
+function rawBodyText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return safeStringify(value);
+}
+
 function sanitizeHeaderValue(value: unknown): string {
   if (value === undefined || value === null) return "";
   return String(value).replace(UNSAFE_HEADER_CHARS, " ").replace(/\s+/g, " ").trim();
@@ -223,7 +238,7 @@ async function readRawBody(request: NextRequest, method: string): Promise<string
 
 interface ParsedBody {
   /** what the validator and the templates see */
-  value: Record<string, unknown>;
+  value: Record<string, unknown> | string;
   /** what goes into the request log */
   logged: unknown;
   /** set when the caller sent something that cannot be parsed at all */
@@ -233,7 +248,9 @@ interface ParsedBody {
 /**
  * Parsing follows the *registered* content type, not the header the caller
  * happened to send: if the endpoint is declared as JSON we always attempt
- * `JSON.parse` and report a `json` issue when that fails.
+ * `JSON.parse` and report a `json` issue when that fails. A non-structured
+ * content type (XML/SOAP/plain text/...) is never parsed - the raw text
+ * itself is the value, so no parse failure is possible there.
  */
 function parseBody(contentType: ContentType, raw: string): ParsedBody {
   if (contentType === "none") {
@@ -247,6 +264,11 @@ function parseBody(contentType: ContentType, raw: string): ParsedBody {
   }
 
   const text = raw.trim();
+
+  if (!isStructuredContentType(contentType)) {
+    return { value: text, logged: text ? truncate(text, MAX_LOGGED_TEXT) : null, issue: null };
+  }
+
   if (!text) return { value: {}, logged: null, issue: null };
 
   try {
@@ -524,22 +546,35 @@ interface RespondInput {
   body: unknown;
   outcome: LogOutcome;
   issues: ValidationIssue[];
+  /**
+   * Set only for a rendered scenario/error body (never for the studio's own
+   * 404/disabled/no-scenario diagnostics, which stay JSON - the caller's
+   * expected content type isn't known yet at that point in the pipeline).
+   */
+  responseContentType?: ContentType;
 }
 
 async function respond(input: RespondInput): Promise<Response> {
   const durationMs = Date.now() - input.facts.startedAt;
 
+  const raw =
+    input.responseContentType !== undefined &&
+    !isStructuredContentType(input.responseContentType);
+
   const headers = new Headers();
   applyHeaders(headers, input.headers);
   applyHeaders(headers, corsHeaders());
-  headers.set("content-type", "application/json; charset=utf-8");
+  headers.set(
+    "content-type",
+    raw ? `${input.responseContentType}; charset=utf-8` : "application/json; charset=utf-8",
+  );
   headers.set("x-mock-endpoint-id", headerTag(input.endpoint?.id));
   headers.set("x-mock-endpoint-name", headerTag(input.endpoint?.name));
   headers.set("x-mock-scenario", headerTag(input.scenario?.name));
   headers.set("x-mock-outcome", input.outcome);
   headers.set("x-mock-duration-ms", String(durationMs));
 
-  const text = safeStringify(input.body);
+  const text = raw ? rawBodyText(input.body) : safeStringify(input.body);
   const isHead = input.facts.method === "HEAD";
   if (isHead) headers.set("content-length", String(Buffer.byteLength(text, "utf8")));
 
@@ -690,7 +725,11 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
         issues,
         meta,
       };
-      const rendered = renderErrorTemplate(endpoint.authError, defaultAuthError(), authCtx);
+      const rendered = renderErrorTemplate(
+        endpoint.authError,
+        defaultAuthError(endpoint.responseContentType),
+        authCtx,
+      );
       await sleep(totalDelay(endpoint.delayMs));
       return await respond({
         facts,
@@ -703,11 +742,13 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
         body: rendered.body,
         outcome: "auth_failed",
         issues,
+        responseContentType: endpoint.responseContentType,
       });
     }
 
     /* 5 - validate --------------------------------------------------- */
 
+    const structured = isStructuredContentType(spec.contentType ?? "application/json");
     let issues: ValidationIssue[];
     let coerced: RequestPayloads;
 
@@ -716,8 +757,11 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
       issues = [parsed.issue];
       coerced = { body: {}, query: queryValues, headers: headerValues, path: params };
     } else {
-      const result = validateRequest(spec, {
-        body: parsed.value,
+      // A raw (non-structured) body has no FieldDef tree of its own - force it
+      // empty so stale body rules left over from a JSON-to-XML switch never
+      // fire a phantom "field is missing" error against an empty object.
+      const result = validateRequest(structured ? spec : { ...spec, body: [] }, {
+        body: structured ? (parsed.value as Record<string, unknown>) : {},
         query: queryValues,
         headers: headerValues,
         path: params,
@@ -727,10 +771,16 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
     }
 
     // Templating and scenario matching run on the COERCED values, so
-    // `{{body.amount}}` renders as a number rather than the raw string.
+    // `{{body.amount}}` renders as a number rather than the raw string. A
+    // non-structured body bypasses coercion entirely - the raw text itself
+    // is what conditions and templates see.
     const ctx: TemplateContext = {
-      // The validator drops a non-object root; keep an array body addressable.
-      body: Array.isArray(parsed.value) ? parsed.value : coerced.body,
+      body: !structured
+        ? (parsed.value as string)
+        : // The validator drops a non-object root; keep an array body addressable.
+          Array.isArray(parsed.value)
+          ? parsed.value
+          : coerced.body,
       query: coerced.query,
       headers: coerced.headers,
       path: coerced.path ?? params,
@@ -741,7 +791,7 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
     if (issues.length > 0) {
       const rendered = renderErrorTemplate(
         endpoint.validationError,
-        defaultValidationError(),
+        defaultValidationError(endpoint.responseContentType),
         ctx,
       );
       await sleep(totalDelay(endpoint.delayMs));
@@ -756,6 +806,7 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
         body: rendered.body,
         outcome: "validation_failed",
         issues,
+        responseContentType: endpoint.responseContentType,
       });
     }
 
@@ -790,6 +841,7 @@ async function handle(request: NextRequest, context: MockRouteContext): Promise<
       body: renderTemplate(scenario.body, ctx),
       outcome: "matched",
       issues: [],
+      responseContentType: endpoint.responseContentType,
     });
   } catch (error) {
     console.error("[mock-runtime] unhandled error", error);

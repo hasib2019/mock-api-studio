@@ -188,6 +188,16 @@ function normalizeEndpointPayload(raw: unknown, partial: boolean): Record<string
     ) {
       bad('Validation mode must be "collectAll" or "failFast"');
     }
+    if (request.sampleBody !== undefined && typeof request.sampleBody !== "string") {
+      bad('"request.sampleBody" must be a string');
+    }
+  }
+
+  if (wanted("responseContentType")) {
+    const responseContentType = draft.responseContentType;
+    if (responseContentType !== undefined && !CONTENT_TYPE_SET.has(String(responseContentType))) {
+      bad(`Unsupported response content type "${String(responseContentType)}"`);
+    }
   }
 
   if (given("scenarios")) draft.scenarios = normalizeScenarios(draft.scenarios);

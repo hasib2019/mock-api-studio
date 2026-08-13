@@ -5,9 +5,11 @@
  * endpoint starts from exactly the same shape.
  */
 
+import { isStructuredContentType } from "@/lib/content-type";
 import { newId } from "@/lib/ids";
 import type {
   Condition,
+  ContentType,
   EndpointDef,
   ErrorTemplate,
   FieldDef,
@@ -62,6 +64,20 @@ export function defaultSuccessBody(): unknown {
   };
 }
 
+/** Starter SOAP 1.1 success envelope, used when a scenario's response is XML. */
+export function defaultSoapEnvelope(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <Response>
+      <status>SUCCESS</status>
+      <requestId>{{uuid}}</requestId>
+      <timestamp>{{now}}</timestamp>
+    </Response>
+  </soap:Body>
+</soap:Envelope>`;
+}
+
 export function newScenario(partial: Partial<ResponseScenario> = {}): ResponseScenario {
   return {
     id: newId("s"),
@@ -77,7 +93,33 @@ export function newScenario(partial: Partial<ResponseScenario> = {}): ResponseSc
   };
 }
 
-export function defaultValidationError(): ErrorTemplate {
+/** SOAP 1.1 Fault envelope, used as the non-JSON default error body. */
+function soapFault(faultstring: string, detail: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <soap:Fault>
+      <faultcode>soap:Client</faultcode>
+      <faultstring>${faultstring}</faultstring>
+      <detail>${detail}</detail>
+    </soap:Fault>
+  </soap:Body>
+</soap:Envelope>`;
+}
+
+export function defaultValidationError(
+  responseContentType: ContentType = "application/json",
+): ErrorTemplate {
+  if (!isStructuredContentType(responseContentType)) {
+    return {
+      status: 422,
+      headers: {},
+      body: soapFault(
+        "Request validation failed",
+        "<errorCount>{{errorCount}}</errorCount>",
+      ),
+    };
+  }
   return {
     status: 422,
     headers: {},
@@ -93,7 +135,16 @@ export function defaultValidationError(): ErrorTemplate {
   };
 }
 
-export function defaultAuthError(): ErrorTemplate {
+export function defaultAuthError(
+  responseContentType: ContentType = "application/json",
+): ErrorTemplate {
+  if (!isStructuredContentType(responseContentType)) {
+    return {
+      status: 401,
+      headers: {},
+      body: soapFault("Missing or invalid credentials", "<requestId>{{uuid}}</requestId>"),
+    };
+  }
   return {
     status: 401,
     headers: {},
@@ -115,12 +166,14 @@ export function defaultRequestSpec(partial: Partial<RequestSpec> = {}): RequestS
     headers: partial.headers ?? [],
     allowUnknownFields: partial.allowUnknownFields ?? true,
     validationMode: partial.validationMode ?? "collectAll",
+    sampleBody: partial.sampleBody ?? "",
   };
 }
 
 export function newEndpoint(projectId: string, partial: Partial<EndpointDef> = {}): EndpointDef {
   const now = new Date().toISOString();
   const method: HttpMethod = partial.method ?? "POST";
+  const responseContentType: ContentType = partial.responseContentType ?? "application/json";
   return {
     id: partial.id ?? newId("ep"),
     projectId,
@@ -131,9 +184,10 @@ export function newEndpoint(projectId: string, partial: Partial<EndpointDef> = {
     enabled: partial.enabled ?? true,
     auth: partial.auth ?? { type: "none" },
     request: defaultRequestSpec(partial.request),
+    responseContentType,
     scenarios: partial.scenarios ?? [newScenario({ isDefault: true })],
-    validationError: partial.validationError ?? defaultValidationError(),
-    authError: partial.authError ?? defaultAuthError(),
+    validationError: partial.validationError ?? defaultValidationError(responseContentType),
+    authError: partial.authError ?? defaultAuthError(responseContentType),
     delayMs: partial.delayMs ?? 0,
     tags: partial.tags ?? [],
     notes: partial.notes ?? "",

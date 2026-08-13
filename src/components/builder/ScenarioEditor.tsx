@@ -124,6 +124,7 @@ export function ScenarioEditor({
   index,
   total,
   bodyText,
+  bodyIsStructured,
   error,
   onChange,
   onBodyTextChange,
@@ -135,6 +136,8 @@ export function ScenarioEditor({
   index: number;
   total: number;
   bodyText: string;
+  /** false for a non-JSON response content type (SOAP/XML/plain text/...) */
+  bodyIsStructured: boolean;
   error?: string;
   onChange: (next: ResponseScenario) => void;
   onBodyTextChange: (text: string) => void;
@@ -308,10 +311,21 @@ export function ScenarioEditor({
           <p className="mb-1.5 text-[13px] font-medium text-slate-700">
             Response body
             <span className="ml-1.5 font-normal text-slate-400">
-              — strings may contain {"{{tokens}}"}
+              — {bodyIsStructured ? "strings" : "the whole body"} may contain {"{{tokens}}"}
             </span>
           </p>
-          <JsonEditor value={bodyText} onChange={onBodyTextChange} minHeight={180} />
+          {bodyIsStructured ? (
+            <JsonEditor value={bodyText} onChange={onBodyTextChange} minHeight={180} />
+          ) : (
+            <Textarea
+              aria-label="Response body"
+              mono
+              rows={10}
+              placeholder={"<soap:Envelope>...</soap:Envelope>"}
+              value={bodyText}
+              onChange={(event) => onBodyTextChange(event.target.value)}
+            />
+          )}
         </div>
       </div>
     </section>

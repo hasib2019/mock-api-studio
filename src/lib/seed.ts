@@ -800,6 +800,97 @@ function transactions(projectId: string): EndpointDef {
 }
 
 /* ------------------------------------------------------------------ *
+ * 6. POST /soap/transfer-status/:referenceNo (SOAP / XML)
+ * ------------------------------------------------------------------ */
+
+/** Reference number that always answers with a SOAP Fault. */
+const UNKNOWN_REFERENCE = "NPSB00000000";
+
+const SOAP_REQUEST_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:npsb="urn:npsb:core">
+  <soap:Body>
+    <npsb:GetTransferStatusRequest>
+      <npsb:ReferenceNo>NPSB12345678</npsb:ReferenceNo>
+    </npsb:GetTransferStatusRequest>
+  </soap:Body>
+</soap:Envelope>`;
+
+function transferStatusSoap(projectId: string): EndpointDef {
+  return newEndpoint(projectId, {
+    name: "Transfer Status (SOAP)",
+    method: "POST",
+    path: "/soap/transfer-status/:referenceNo",
+    description:
+      "SOAP counterpart of the fund transfer flow - looks up a transfer by its reference " +
+      "number and answers with a SOAP envelope. Demonstrates the studio's non-JSON content " +
+      "types: the request and response bodies are raw XML, not a validated field tree.",
+    tags: ["payments", "npsb", "soap"],
+    notes:
+      "The studio does not parse XML, so a scenario can only match the whole raw body " +
+      "(contains/regex) or a header such as SOAPAction - never a field inside it. This demo " +
+      "sidesteps that by keying the reference number off the URL (:referenceNo) instead of the " +
+      `envelope. Call it with ${UNKNOWN_REFERENCE} to see the SOAP Fault response.`,
+    auth: { type: "none" },
+    request: {
+      contentType: "text/xml",
+      allowUnknownFields: true,
+      validationMode: "collectAll",
+      body: [],
+      query: [],
+      headers: [],
+      sampleBody: SOAP_REQUEST_SAMPLE,
+    },
+    responseContentType: "text/xml",
+    scenarios: [
+      newScenario({
+        name: "Reference not found",
+        description: `Reference ${UNKNOWN_REFERENCE} does not exist in the sandbox ledger.`,
+        conditions: [
+          newCondition({
+            source: "path",
+            path: "referenceNo",
+            operator: "eq",
+            value: UNKNOWN_REFERENCE,
+          }),
+        ],
+        status: 200,
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <soap:Fault>
+      <faultcode>soap:Client</faultcode>
+      <faultstring>No transfer found for reference {{path.referenceNo}}</faultstring>
+      <detail>
+        <referenceNo>{{path.referenceNo}}</referenceNo>
+      </detail>
+    </soap:Fault>
+  </soap:Body>
+</soap:Envelope>`,
+      }),
+      newScenario({
+        name: "Transfer status",
+        description: "Default response: a completed transfer.",
+        isDefault: true,
+        status: 200,
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:npsb="urn:npsb:core">
+  <soap:Body>
+    <npsb:GetTransferStatusResponse>
+      <npsb:ReferenceNo>{{path.referenceNo}}</npsb:ReferenceNo>
+      <npsb:Status>COMPLETED</npsb:Status>
+      <npsb:Amount>{{randomDecimal(100,50000,2)}}</npsb:Amount>
+      <npsb:Currency>BDT</npsb:Currency>
+      <npsb:SettledAt>{{now}}</npsb:SettledAt>
+      <npsb:TraceId>{{uuid}}</npsb:TraceId>
+    </npsb:GetTransferStatusResponse>
+  </soap:Body>
+</soap:Envelope>`,
+      }),
+    ],
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * Installer
  * ------------------------------------------------------------------ */
 
@@ -812,6 +903,7 @@ const ENDPOINT_BUILDERS: Array<(projectId: string) => EndpointDef> = [
   otpSend,
   otpVerify,
   transactions,
+  transferStatusSoap,
 ];
 
 /**

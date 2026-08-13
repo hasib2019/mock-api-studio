@@ -300,6 +300,7 @@ const TOC = [
   { id: "flow", label: "The three-step flow" },
   { id: "url", label: "How the mock URL is composed" },
   { id: "auth", label: "Endpoint authentication" },
+  { id: "protocols", label: "SOAP, XML and other non-JSON APIs" },
   { id: "rules", label: "Validation rule catalog" },
   { id: "tokens", label: "Response templating tokens" },
   { id: "scenarios", label: "Scenario matching order" },
@@ -588,6 +589,77 @@ export default function DocsPage() {
           the call is logged with the outcome{" "}
           <code className="font-mono text-[12.5px]">auth_failed</code>. The try-it console can fill
           the configured credentials into the header editor for you.
+        </p>
+      </SectionCard>
+
+      {/* ------------------------------ protocols ------------------------------ */}
+      <SectionCard
+        id="protocols"
+        title="SOAP, XML and other non-JSON APIs"
+        intro="A request or response content type outside JSON/form-urlencoded is carried as a raw string end to end - no parsing, no field validation."
+      >
+        <p>
+          The <strong>Content type</strong> picker on the Request tab and the{" "}
+          <strong>Response format</strong> picker on the Responses tab each accept JSON,
+          form-urlencoded, SOAP (<code className="font-mono text-[12.5px]">text/xml</code> or{" "}
+          <code className="font-mono text-[12.5px]">application/soap+xml</code>), plain XML or
+          plain text - independently, so a request can arrive as XML while the response stays
+          JSON, or the other way around.
+        </p>
+        <p>
+          Picking a non-JSON type swaps the body editor from the field tree / JSON editor to a
+          plain text box. On the request side that text is only a documentation sample (curl,
+          Try-It, the exporters) - the runtime never validates it. On the response side it <em>is</em>{" "}
+          the literal response: write the whole envelope yourself, and any{" "}
+          <code className="font-mono text-[12.5px]">{"{{token}}"}</code> from the templating
+          section below still renders inline.
+        </p>
+        <div>
+          <p className="mb-1.5 text-[13px] font-semibold text-slate-900">What still works</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              Every response template token (<code className="font-mono text-[12.5px]">{"{{now}}"}</code>,{" "}
+              <code className="font-mono text-[12.5px]">{"{{uuid}}"}</code>,{" "}
+              <code className="font-mono text-[12.5px]">{"{{path.*}}"}</code>,{" "}
+              <code className="font-mono text-[12.5px]">{"{{headers.*}}"}</code>, generators, ...).
+            </li>
+            <li>
+              Scenario matching on <strong>path</strong>, <strong>query</strong> and{" "}
+              <strong>headers</strong> (for example a{" "}
+              <code className="font-mono text-[12.5px]">SOAPAction</code> header), exactly as for a
+              JSON endpoint.
+            </li>
+            <li>
+              Whole-body matching: a condition with source <strong>body</strong> and an{" "}
+              <strong>empty path</strong> compares against the entire raw text, so{" "}
+              <code className="font-mono text-[12.5px]">contains</code> /{" "}
+              <code className="font-mono text-[12.5px]">regex</code> /{" "}
+              <code className="font-mono text-[12.5px]">eq</code> can still branch on what the
+              caller sent.
+            </li>
+          </ul>
+        </div>
+        <div>
+          <p className="mb-1.5 text-[13px] font-semibold text-slate-900">What does not</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              No XPath: a condition cannot drill into a field inside the XML body, only match the
+              whole string. Key what a scenario matches on off the path, query or a header instead.
+            </li>
+            <li>No WSDL/XSD import and no schema-driven validation of the body.</li>
+            <li>
+              No automatic XML-escaping of interpolated values - wrap anything caller-supplied in{" "}
+              <code className="font-mono text-[12.5px]">{"<![CDATA[ ... ]]>"}</code> if it might
+              contain <code className="font-mono text-[12.5px]">&lt;</code> or{" "}
+              <code className="font-mono text-[12.5px]">&amp;</code>.
+            </li>
+          </ul>
+        </div>
+        <p>
+          The demo project ships a worked example: <strong>Transfer Status (SOAP)</strong>, a{" "}
+          <code className="font-mono text-[12.5px]">POST /soap/transfer-status/:referenceNo</code>{" "}
+          endpoint that returns a SOAP envelope, keyed off the reference number in the URL rather
+          than the envelope itself.
         </p>
       </SectionCard>
 

@@ -36,7 +36,8 @@ import {
   Toggle,
 } from "@/components/ui";
 import { ApiError, adminApi } from "@/lib/api-client";
-import { newScenario } from "@/lib/defaults";
+import { isStructuredContentType, RESPONSE_CONTENT_TYPES } from "@/lib/content-type";
+import { defaultSoapEnvelope, newScenario } from "@/lib/defaults";
 import { normalizePath } from "@/lib/ids";
 import { renderTemplate } from "@/lib/template";
 import {
@@ -78,9 +79,18 @@ const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
   "application/json": "application/json",
   "application/x-www-form-urlencoded": "application/x-www-form-urlencoded",
   none: "No body",
+  "text/xml": "SOAP / XML (text/xml)",
+  "application/soap+xml": "SOAP 1.2 (application/soap+xml)",
+  "application/xml": "XML (application/xml)",
+  "text/plain": "Plain text (text/plain)",
 };
 
 const CONTENT_TYPE_OPTIONS = CONTENT_TYPES.map((value) => ({
+  value,
+  label: CONTENT_TYPE_LABELS[value],
+}));
+
+const RESPONSE_CONTENT_TYPE_OPTIONS = RESPONSE_CONTENT_TYPES.map((value) => ({
   value,
   label: CONTENT_TYPE_LABELS[value],
 }));
@@ -161,17 +171,30 @@ function parseDraft(text: string): { ok: boolean; value: unknown } {
   }
 }
 
+/**
+ * Draft text for a response body: a non-structured response (SOAP/XML/plain
+ * text/...) stores its body as a plain string, shown verbatim; a structured
+ * one is pretty-printed JSON. A string turning up on the structured side
+ * (a legal-but-rare bare-string JSON body) still round-trips through JSON so
+ * the draft shows it quoted, matching what will actually be sent.
+ */
+function draftText(value: unknown, structured: boolean): string {
+  if (!structured) return typeof value === "string" ? value : stringifyBody(value);
+  return stringifyBody(value);
+}
+
 function scenarioDraftKey(id: string): string {
   return `scenario:${id}`;
 }
 
 function buildDrafts(endpoint: EndpointDef): Record<string, string> {
+  const structured = isStructuredContentType(endpoint.responseContentType);
   const drafts: Record<string, string> = {
-    [VALIDATION_DRAFT]: stringifyBody(endpoint.validationError.body),
-    [AUTH_DRAFT]: stringifyBody(endpoint.authError.body),
+    [VALIDATION_DRAFT]: draftText(endpoint.validationError.body, structured),
+    [AUTH_DRAFT]: draftText(endpoint.authError.body, structured),
   };
   for (const scenario of endpoint.scenarios) {
-    drafts[scenarioDraftKey(scenario.id)] = stringifyBody(scenario.body);
+    drafts[scenarioDraftKey(scenario.id)] = draftText(scenario.body, structured);
   }
   return drafts;
 }
@@ -188,6 +211,7 @@ function toInput(endpoint: EndpointDef): EndpointInput {
     enabled: endpoint.enabled,
     auth: endpoint.auth,
     request: endpoint.request,
+    responseContentType: endpoint.responseContentType,
     scenarios: endpoint.scenarios,
     validationError: endpoint.validationError,
     authError: endpoint.authError,
@@ -403,6 +427,12 @@ export function EndpointBuilder({
 
   const [endpoint, setEndpoint] = React.useState<EndpointDef>(initial);
   const [drafts, setDrafts] = React.useState<Record<string, string>>(() => buildDrafts(initial));
+
+  // Structured = JSON/form-urlencoded, parsed and validated against a FieldDef
+  // tree. Anything else (SOAP/XML/plain text/...) is carried as an opaque
+  // string end to end, on the request and response side independently.
+  const structuredRequest = isStructuredContentType(endpoint.request.contentType);
+  const structuredResponse = isStructuredContentType(endpoint.responseContentType);
   const [savedSignature, setSavedSignature] = React.useState(() =>
     signatureOf(initial, buildDrafts(initial)),
   );
@@ -485,6 +515,10 @@ export function EndpointBuilder({
     const key = which === "validationError" ? VALIDATION_DRAFT : AUTH_DRAFT;
     setDrafts((prev) => ({ ...prev, [key]: text }));
     setErrors(NO_ERRORS);
+    if (!structuredResponse) {
+      patchErrorTemplate(which, { body: text });
+      return;
+    }
     const parsed = parseDraft(text);
     if (parsed.ok) patchErrorTemplate(which, { body: parsed.value });
   }
@@ -492,6 +526,13 @@ export function EndpointBuilder({
   function setScenarioBodyText(id: string, text: string) {
     setDrafts((prev) => ({ ...prev, [scenarioDraftKey(id)]: text }));
     setErrors(NO_ERRORS);
+    if (!structuredResponse) {
+      mutate((prev) => ({
+        ...prev,
+        scenarios: prev.scenarios.map((s) => (s.id === id ? { ...s, body: text } : s)),
+      }));
+      return;
+    }
     const parsed = parseDraft(text);
     if (!parsed.ok) return;
     mutate((prev) => ({
@@ -511,11 +552,12 @@ export function EndpointBuilder({
     const scenario = newScenario({
       name: `Scenario ${endpoint.scenarios.length + 1}`,
       isDefault: endpoint.scenarios.length === 0,
+      body: structuredResponse ? undefined : defaultSoapEnvelope(),
     });
     mutate((prev) => ({ ...prev, scenarios: [...prev.scenarios, scenario] }));
     setDrafts((prev) => ({
       ...prev,
-      [scenarioDraftKey(scenario.id)]: stringifyBody(scenario.body),
+      [scenarioDraftKey(scenario.id)]: draftText(scenario.body, structuredResponse),
     }));
   }
 
@@ -616,7 +658,9 @@ export function EndpointBuilder({
     }
 
     const beforeFields = problems.length;
-    collectFieldProblems(endpoint.request.body, "the body", next.fields, problems);
+    if (structuredRequest) {
+      collectFieldProblems(endpoint.request.body, "the body", next.fields, problems);
+    }
     collectFieldProblems(endpoint.request.query, "the query", next.fields, problems);
     collectFieldProblems(endpoint.request.headers, "the headers", next.fields, problems);
     if (problems.length > beforeFields) mark("request");
@@ -637,20 +681,22 @@ export function EndpointBuilder({
         mark("responses");
       }
       const key = scenarioDraftKey(scenario.id);
-      if (!parseDraft(drafts[key] ?? "").ok) {
+      if (structuredResponse && !parseDraft(drafts[key] ?? "").ok) {
         next.bodies[key] = "Invalid JSON";
         problems.push(`the body of “${scenario.name || "a scenario"}” is not valid JSON`);
         mark("responses");
       }
     }
 
-    for (const key of [VALIDATION_DRAFT, AUTH_DRAFT]) {
-      if (!parseDraft(drafts[key] ?? "").ok) {
-        next.bodies[key] = "Invalid JSON";
-        problems.push(
-          `the ${key === VALIDATION_DRAFT ? "validation" : "auth"} error body is not valid JSON`,
-        );
-        mark("responses");
+    if (structuredResponse) {
+      for (const key of [VALIDATION_DRAFT, AUTH_DRAFT]) {
+        if (!parseDraft(drafts[key] ?? "").ok) {
+          next.bodies[key] = "Invalid JSON";
+          problems.push(
+            `the ${key === VALIDATION_DRAFT ? "validation" : "auth"} error body is not valid JSON`,
+          );
+          mark("responses");
+        }
       }
     }
 
@@ -731,6 +777,7 @@ export function EndpointBuilder({
     () => sampleObject(endpoint.request.body, 0),
     [endpoint.request.body],
   );
+  const sampleBodyRaw = endpoint.request.sampleBody ?? "";
   const sampleQuery = React.useMemo(
     () => asStringRecord(sampleObject(endpoint.request.query, 0)),
     [endpoint.request.query],
@@ -740,7 +787,10 @@ export function EndpointBuilder({
     [endpoint.request.headers],
   );
 
-  const sampleBodyText = React.useMemo(() => stringifyBody(sampleBody), [sampleBody]);
+  const sampleBodyText = React.useMemo(
+    () => (structuredRequest ? stringifyBody(sampleBody) : sampleBodyRaw),
+    [structuredRequest, sampleBody, sampleBodyRaw],
+  );
 
   const curl = React.useMemo(() => {
     const query = encodeForm(sampleQuery);
@@ -768,7 +818,9 @@ export function EndpointBuilder({
       lines.push(
         endpoint.request.contentType === "application/json"
           ? `  -d '${sampleBodyText || "{}"}'`
-          : `  -d "${encodeForm(asStringRecord(sampleBody))}"`,
+          : endpoint.request.contentType === "application/x-www-form-urlencoded"
+            ? `  -d "${encodeForm(asStringRecord(sampleBody))}"`
+            : `  -d '${sampleBodyText}'`,
       );
     }
     return lines.join(" \\\n");
@@ -791,23 +843,30 @@ export function EndpointBuilder({
   const renderedResponse = React.useMemo(() => {
     if (!defaultScenario) return "// no response scenario registered yet";
     const ctx: TemplateContext = {
-      body: sampleBody,
+      body: structuredRequest ? sampleBody : sampleBodyRaw,
       query: sampleQuery,
       headers: sampleHeaders,
       path: pathParams(endpoint.path),
       meta: { method: endpoint.method, path: shownPath, endpoint: endpoint.name },
     };
+    const show = (rendered: unknown): string => {
+      if (!structuredResponse) return typeof rendered === "string" ? rendered : stringifyBody(rendered);
+      return stringifyBody(rendered) || "null";
+    };
     try {
-      return stringifyBody(renderTemplate(defaultScenario.body, ctx)) || "null";
+      return show(renderTemplate(defaultScenario.body, ctx));
     } catch {
-      return stringifyBody(defaultScenario.body) || "null";
+      return show(defaultScenario.body);
     }
   }, [
     defaultScenario,
     endpoint.method,
     endpoint.name,
     endpoint.path,
+    structuredRequest,
+    structuredResponse,
     sampleBody,
+    sampleBodyRaw,
     sampleHeaders,
     sampleQuery,
     shownPath,
@@ -1123,16 +1182,53 @@ export function EndpointBuilder({
 
           <Section
             title="Body"
-            description="Validated against the parsed request body"
-            count={endpoint.request.body.length}
+            description={
+              structuredRequest
+                ? "Validated against the parsed request body"
+                : "Raw text (XML/SOAP/plain) — sent through unparsed and unvalidated"
+            }
+            count={structuredRequest ? endpoint.request.body.length : sampleBodyRaw.trim() ? 1 : 0}
             open={openSections.body}
             onToggle={() => setOpenSections((prev) => ({ ...prev, body: !prev.body }))}
           >
-            <FieldList
-              fields={endpoint.request.body}
-              errors={errors.fields}
-              onChange={(fields) => setPayloadFields("body", fields)}
-            />
+            {structuredRequest ? (
+              <FieldList
+                fields={endpoint.request.body}
+                errors={errors.fields}
+                onChange={(fields) => setPayloadFields("body", fields)}
+              />
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[13px] leading-5 text-slate-500">
+                    Example body only — no schema, no validation. Use a condition on{" "}
+                    <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px]">
+                      body
+                    </code>{" "}
+                    (whole-text contains/regex) or a header like{" "}
+                    <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px]">
+                      SOAPAction
+                    </code>{" "}
+                    to pick a scenario.
+                  </p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => updateRequest({ sampleBody: defaultSoapEnvelope() })}
+                  >
+                    Insert SOAP template
+                  </Button>
+                </div>
+                <Textarea
+                  aria-label="Sample request body"
+                  mono
+                  rows={10}
+                  placeholder={"<soap:Envelope>...</soap:Envelope>"}
+                  value={endpoint.request.sampleBody ?? ""}
+                  onChange={(event) => updateRequest({ sampleBody: event.target.value })}
+                />
+              </div>
+            )}
           </Section>
 
           <Section
@@ -1170,6 +1266,29 @@ export function EndpointBuilder({
       {/* --------------------------- responses -------------------------- */}
       {tab === "responses" ? (
         <div className="space-y-5">
+          <Card
+            title="Response format"
+            description="What every scenario and error body below is rendered and sent as."
+          >
+            <div className="max-w-xs">
+              <Select
+                label="Content type"
+                value={endpoint.responseContentType}
+                options={RESPONSE_CONTENT_TYPE_OPTIONS}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (isContentType(next)) update({ responseContentType: next });
+                }}
+              />
+            </div>
+            <p className="mt-3 text-[13px] leading-5 text-slate-500">
+              {structuredResponse
+                ? "Scenario and error bodies are edited as JSON."
+                : "Scenario and error bodies are edited as raw text — write the full response " +
+                  "(e.g. a SOAP envelope) yourself, {{tokens}} render inline."}
+            </p>
+          </Card>
+
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Response scenarios</h2>
@@ -1196,6 +1315,7 @@ export function EndpointBuilder({
                   index={index}
                   total={endpoint.scenarios.length}
                   bodyText={drafts[scenarioDraftKey(scenario.id)] ?? ""}
+                  bodyIsStructured={structuredResponse}
                   error={errors.scenarios[scenario.id]}
                   onChange={updateScenario}
                   onBodyTextChange={(text) => setScenarioBodyText(scenario.id, text)}
@@ -1238,11 +1358,21 @@ export function EndpointBuilder({
                     Body — {"{{errors}}"}, {"{{errorCount}}"} and {"{{firstError.field}}"} are
                     available here
                   </p>
-                  <JsonEditor
-                    value={drafts[VALIDATION_DRAFT] ?? ""}
-                    onChange={(text) => setErrorBodyText("validationError", text)}
-                    minHeight={200}
-                  />
+                  {structuredResponse ? (
+                    <JsonEditor
+                      value={drafts[VALIDATION_DRAFT] ?? ""}
+                      onChange={(text) => setErrorBodyText("validationError", text)}
+                      minHeight={200}
+                    />
+                  ) : (
+                    <Textarea
+                      aria-label="Validation error body"
+                      mono
+                      rows={9}
+                      value={drafts[VALIDATION_DRAFT] ?? ""}
+                      onChange={(event) => setErrorBodyText("validationError", event.target.value)}
+                    />
+                  )}
                 </div>
               </div>
             </Card>
@@ -1272,11 +1402,21 @@ export function EndpointBuilder({
                 </div>
                 <div>
                   <p className="mb-1.5 text-[13px] font-medium text-slate-700">Body</p>
-                  <JsonEditor
-                    value={drafts[AUTH_DRAFT] ?? ""}
-                    onChange={(text) => setErrorBodyText("authError", text)}
-                    minHeight={200}
-                  />
+                  {structuredResponse ? (
+                    <JsonEditor
+                      value={drafts[AUTH_DRAFT] ?? ""}
+                      onChange={(text) => setErrorBodyText("authError", text)}
+                      minHeight={200}
+                    />
+                  ) : (
+                    <Textarea
+                      aria-label="Auth error body"
+                      mono
+                      rows={9}
+                      value={drafts[AUTH_DRAFT] ?? ""}
+                      onChange={(event) => setErrorBodyText("authError", event.target.value)}
+                    />
+                  )}
                 </div>
               </div>
             </Card>
@@ -1357,8 +1497,12 @@ export function EndpointBuilder({
         <div className="space-y-4">
           <Select
             label="Add to"
-            value={inferTarget}
-            options={PAYLOAD_TARGET_OPTIONS}
+            value={structuredRequest ? inferTarget : inferTarget === "body" ? "query" : inferTarget}
+            options={
+              structuredRequest
+                ? PAYLOAD_TARGET_OPTIONS
+                : PAYLOAD_TARGET_OPTIONS.filter((option) => option.value !== "body")
+            }
             onChange={(event) => {
               const next = event.target.value;
               if (next === "body" || next === "query" || next === "headers") setInferTarget(next);

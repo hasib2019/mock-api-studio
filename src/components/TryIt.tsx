@@ -23,7 +23,9 @@ import {
   MethodBadge,
   StatusBadge,
   Tabs,
+  Textarea,
 } from "@/components/ui";
+import { isStructuredContentType } from "@/lib/content-type";
 import type {
   AuthSpec,
   ContentType,
@@ -217,11 +219,12 @@ function safeTargetUrl(raw: string, query: Record<string, string>): string {
 }
 
 function contentTypeHeader(contentType: ContentType): string | null {
-  if (contentType === "application/json") return "application/json";
-  if (contentType === "application/x-www-form-urlencoded") {
-    return "application/x-www-form-urlencoded";
-  }
-  return null;
+  return contentType === "none" ? null : contentType;
+}
+
+function seedBodyText(endpoint: EndpointDef, structured: boolean): string {
+  if (!structured) return endpoint.request.sampleBody ?? "";
+  return JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2);
 }
 
 function encodeBody(bodyText: string, contentType: ContentType): string {
@@ -339,10 +342,9 @@ export interface TryItProps {
 }
 
 export function TryIt({ project, endpoint }: TryItProps) {
+  const structuredRequest = isStructuredContentType(endpoint.request.contentType);
   const [urlOverride, setUrlOverride] = React.useState<string | null>(null);
-  const [bodyText, setBodyText] = React.useState(() =>
-    JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2),
-  );
+  const [bodyText, setBodyText] = React.useState(() => seedBodyText(endpoint, structuredRequest));
   const [query, setQuery] = React.useState<Record<string, string>>(() =>
     recordFromFields(endpoint.request.query),
   );
@@ -367,11 +369,11 @@ export function TryIt({ project, endpoint }: TryItProps) {
     if (lastEndpointId.current === endpoint.id) return;
     lastEndpointId.current = endpoint.id;
     setUrlOverride(null);
-    setBodyText(JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2));
+    setBodyText(seedBodyText(endpoint, structuredRequest));
     setQuery(recordFromFields(endpoint.request.query));
     setHeaders(recordFromFields(endpoint.request.headers));
     setResult({ kind: "idle" });
-  }, [endpoint]);
+  }, [endpoint, structuredRequest]);
 
   const outgoingHeaders = React.useMemo(() => {
     const merged: Record<string, string> = {};
@@ -397,7 +399,7 @@ export function TryIt({ project, endpoint }: TryItProps) {
   );
 
   function reseed() {
-    setBodyText(JSON.stringify(sampleObject(endpoint.request.body, 0), null, 2));
+    setBodyText(seedBodyText(endpoint, structuredRequest));
     setQuery(recordFromFields(endpoint.request.query));
     setHeaders(recordFromFields(endpoint.request.headers));
     setUrlOverride(null);
@@ -569,9 +571,22 @@ export function TryIt({ project, endpoint }: TryItProps) {
 
           {activeTab === "body" && sendsBody ? (
             <div className="space-y-2">
-              <JsonEditor value={bodyText} onChange={setBodyText} minHeight={200} />
+              {structuredRequest ? (
+                <JsonEditor value={bodyText} onChange={setBodyText} minHeight={200} />
+              ) : (
+                <Textarea
+                  aria-label="Request body"
+                  mono
+                  rows={10}
+                  value={bodyText}
+                  onChange={(event) => setBodyText(event.target.value)}
+                />
+              )}
               <p className="text-[12px] text-slate-500">
-                Pre-filled from the registered field examples and defaults. Content type:{" "}
+                {structuredRequest
+                  ? "Pre-filled from the registered field examples and defaults."
+                  : "Pre-filled from the registered sample body."}{" "}
+                Content type:{" "}
                 <code className="font-mono text-[11.5px] text-slate-700">
                   {endpoint.request.contentType}
                 </code>

@@ -1,0 +1,73 @@
+{
+  "id": "ep_msreobr409mrlzqp",
+  "projectId": "pr_msq38nj9kfkpfifu",
+  "name": "Transfer Status (SOAP)",
+  "description": "SOAP counterpart of the fund transfer flow - looks up a transfer by its reference number and answers with a SOAP envelope. Demonstrates the studio non-JSON content types: the request and response bodies are raw XML, not a validated field tree.",
+  "method": "POST",
+  "path": "/soap/transfer-status/:referenceNo",
+  "enabled": true,
+  "auth": {
+    "type": "none"
+  },
+  "request": {
+    "contentType": "text/xml",
+    "body": [],
+    "query": [],
+    "headers": [],
+    "allowUnknownFields": true,
+    "validationMode": "collectAll",
+    "sampleBody": "<?xml version=\"1.0\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><npsb:GetTransferStatusRequest xmlns:npsb=\"urn:npsb:core\"><npsb:ReferenceNo>NPSB12345678</npsb:ReferenceNo></npsb:GetTransferStatusRequest></soap:Body></soap:Envelope>"
+  },
+  "responseContentType": "text/xml",
+  "scenarios": [
+    {
+      "id": "s_fault",
+      "name": "Reference not found",
+      "isDefault": false,
+      "enabled": true,
+      "conditions": [
+        {
+          "id": "c1",
+          "source": "path",
+          "path": "referenceNo",
+          "operator": "eq",
+          "value": "NPSB00000000"
+        }
+      ],
+      "status": 200,
+      "headers": {},
+      "body": "<?xml version=\"1.0\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><soap:Fault><faultcode>soap:Client</faultcode><faultstring>No transfer found for reference {{path.referenceNo}}</faultstring></soap:Fault></soap:Body></soap:Envelope>",
+      "delayMs": 0
+    },
+    {
+      "id": "s_ok",
+      "name": "Transfer status",
+      "isDefault": true,
+      "enabled": true,
+      "conditions": [],
+      "status": 200,
+      "headers": {},
+      "body": "<?xml version=\"1.0\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><npsb:GetTransferStatusResponse xmlns:npsb=\"urn:npsb:core\"><npsb:ReferenceNo>{{path.referenceNo}}</npsb:ReferenceNo><npsb:Status>COMPLETED</npsb:Status><npsb:Amount>{{randomDecimal(100,50000,2)}}</npsb:Amount><npsb:Currency>BDT</npsb:Currency><npsb:SettledAt>{{now}}</npsb:SettledAt><npsb:TraceId>{{uuid}}</npsb:TraceId></npsb:GetTransferStatusResponse></soap:Body></soap:Envelope>",
+      "delayMs": 0
+    }
+  ],
+  "validationError": {
+    "status": 422,
+    "headers": {},
+    "body": "<?xml version=\"1.0\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><soap:Fault><faultcode>soap:Client</faultcode><faultstring>Request validation failed</faultstring><detail><errorCount>{{errorCount}}</errorCount></detail></soap:Fault></soap:Body></soap:Envelope>"
+  },
+  "authError": {
+    "status": 401,
+    "headers": {},
+    "body": "<?xml version=\"1.0\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><soap:Fault><faultcode>soap:Client</faultcode><faultstring>Missing or invalid credentials</faultstring></soap:Fault></soap:Body></soap:Envelope>"
+  },
+  "delayMs": 0,
+  "tags": [
+    "payments",
+    "npsb",
+    "soap"
+  ],
+  "notes": "The studio does not parse XML, so a scenario can only match the whole raw body (contains/regex) or a header such as SOAPAction - never a field inside it. This demo sidesteps that by keying the reference number off the URL (:referenceNo) instead of the envelope. Call it with NPSB00000000 to see the SOAP Fault response.",
+  "createdAt": "2026-08-13T10:59:11.872Z",
+  "updatedAt": "2026-08-13T11:00:08.042Z"
+}
