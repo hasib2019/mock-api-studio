@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { NextRequest } from "next/server";
 
 import type { SessionPayload, StudioUser } from "@/lib/types";
 
@@ -112,14 +113,30 @@ export interface SessionCookieOptions {
   maxAge: number;
 }
 
+/**
+ * A cookie marked `Secure` is only stored/sent by the browser over HTTPS (or
+ * from `localhost`, which browsers treat as trustworthy on its own). Next.js
+ * itself never terminates TLS here - a reverse proxy (Caddy, Vercel's edge)
+ * does, and forwards to this app in plain HTTP - so `NODE_ENV` alone cannot
+ * tell us whether the browser's connection was actually encrypted. Trust
+ * `X-Forwarded-Proto` from the proxy first, falling back to the request's
+ * own scheme for the rare case nothing sits in front of this process.
+ */
+export function isSecureRequest(request: NextRequest): boolean {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto) return forwardedProto.split(",")[0]?.trim() === "https";
+  return request.nextUrl.protocol === "https:";
+}
+
 export function sessionCookieOptions(
   maxAge: number = SESSION_TTL_SECONDS,
+  secure: boolean = process.env.NODE_ENV === "production",
 ): SessionCookieOptions {
   return {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    secure,
     maxAge,
   };
 }

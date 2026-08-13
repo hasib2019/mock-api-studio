@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   SESSION_COOKIE,
+  isSecureRequest,
   newSessionPayload,
   sessionCookieOptions,
   signSession,
@@ -117,6 +118,10 @@ export async function POST(request: NextRequest) {
     ok: true,
     data: { username: user.username, name: user.name, role: user.role },
   });
-  response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+  response.cookies.set(
+    SESSION_COOKIE,
+    token,
+    sessionCookieOptions(undefined, isSecureRequest(request)),
+  );
   return response;
 }
