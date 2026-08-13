@@ -35,12 +35,16 @@ interface LogsCache {
 let cached: LogsCache | null = null;
 let dirsReady: Promise<void> | null = null;
 
+/**
+ * Best-effort directory setup. On a read-only deploy this can never succeed,
+ * but `readJson`/`listJsonFiles` already fall back gracefully on their own,
+ * so a failure here must not block a read. `writeJson` creates its own
+ * parent directory right before writing regardless, so swallowing the error
+ * here does not hide a real failure from an actual write attempt.
+ */
 function ready(): Promise<void> {
   if (!dirsReady) {
-    dirsReady = ensureDataDirs().catch((error: unknown) => {
-      dirsReady = null;
-      throw error;
-    });
+    dirsReady = ensureDataDirs().catch(() => undefined);
   }
   return dirsReady;
 }
