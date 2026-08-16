@@ -7,8 +7,9 @@ more response scenarios — and you immediately have a working HTTP endpoint tha
 the real thing: it rejects bad payloads with a proper error envelope, echoes your data back
 through templates, and switches responses based on what you send.
 
-Everything is stored as plain JSON files on disk. No database, no cloud, no accounts, no
-external dependencies beyond Next.js and React.
+Everything is stored in Postgres - point `DATABASE_URL` at any standard instance (Vercel
+Postgres/Neon, Supabase, RDS, or a local one) and the studio creates its own tables on first
+use. No accounts beyond the studio's own users, no other external dependencies.
 
 ---
 
@@ -27,8 +28,9 @@ Ei tool diye apni nijei ekta **nokol (mock) API** banaben — teen ta step-e:
 
 Er por `http://localhost:3000/api/mock/<project-slug>/<path>` e call korle asol API-r moto
 kaaj korbe: bhul payload dile 422 error list, thik payload dile registered response.
-Shob definition JSON file hishebe `data/` folder-e thake, tai git-e commit kore puro team
-share korte paren. Login: `admin` / `Era@1234!!`.
+Shob definition Postgres-e (`DATABASE_URL`) thake; team-er shathe share korte hole project
+page theke **Export** kore JSON file pathan, ba onno instance-e **Import** korun. Login:
+`admin` / `Era@1234!!`.
 
 ---
 
@@ -77,22 +79,27 @@ returns the response you registered, with your request data interpolated into it
 
 ## Quick start
 
-Requirements: **Node.js 20.9+** (22 LTS recommended) and npm. Windows, macOS and Linux all work.
+Requirements: **Node.js 20.9+** (22 LTS recommended), npm, and a **Postgres database**
+(a free Neon/Supabase project or a local instance both work). Windows, macOS and Linux all
+work.
 
 ```bash
 git clone <your-repo-url> mock-api-studio
 cd mock-api-studio
 npm install
+cp .env.example .env.local        # PowerShell: Copy-Item .env.example .env.local
+# edit .env.local and set DATABASE_URL to your Postgres connection string
 npm run dev
 ```
 
-Open <http://localhost:3000>. You will land on the login page.
+Open <http://localhost:3000>. You will land on the login page. Tables are created
+automatically on first use — nothing to migrate for a fresh database.
 
 **Default login: `admin` / `Era@1234!!`.**
 
 The account is created on the first run from `ADMIN_USERNAME` / `ADMIN_PASSWORD` (see below)
-and stored — password hashed with PBKDF2-SHA512 — in `data/users.json`. Change the password
-from the **Users** page before anyone else can reach the host.
+and stored — password hashed with PBKDF2-SHA512 — in the `studio_users` table. Change the
+password from the **Users** page before anyone else can reach the host.
 
 Then run the **Load demo data** action in the studio (or `POST /api/admin/seed`). It installs
 the **Core Banking Sandbox** project with six ready-made endpoints:
@@ -125,10 +132,12 @@ Copy `.env.example` to `.env.local` and edit. Every value has a sane default for
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `DATABASE_URL` | *(required, unless `DB_ENV=local`)* | Postgres connection string. Projects, endpoints, users and logs all live here — see [Where the data lives](#where-the-data-lives-and-how-to-share-it). `POSTGRES_URL` / `PRISMA_DATABASE_URL` work as aliases, in that order, for hosts that hand out one of those names instead. |
+| `DB_ENV` | *(unset)* | Set to `local` to connect with the discrete `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` / `DB_SSL` variables instead of a connection string — handy for a LAN/on-prem Postgres. Anything else uses `DATABASE_URL` et al. |
+| `DB_SCHEMA` | `public` | Puts every studio table in this schema instead of `public` — use it when the database is shared with another app. |
 | `SESSION_SECRET` | built-in dev secret | HMAC key for the `mas_session` cookie (12 h TTL). **Set this in production** — otherwise the app falls back to a public development secret and warns on boot. Changing it signs everyone out. |
-| `ADMIN_USERNAME` | `admin` | Username of the first studio user, created only when `users.json` does not exist yet. |
+| `ADMIN_USERNAME` | `admin` | Username of the first studio user, created only when the `studio_users` table is empty. |
 | `ADMIN_PASSWORD` | `Era@1234!!` | Password of that first user. Ignored once the user exists — change it from the Users page. |
-| `MOCK_DATA_DIR` | `./data` | Where projects, endpoints, users and logs are written. Point it at a persistent volume (or a shared folder) if you do not want the definitions inside the repo. |
 | `MOCK_LOG_RETENTION` | `500` | How many request logs to keep. Oldest entries are pruned on write. |
 
 Generate a secret:
@@ -609,35 +618,25 @@ Typical set for a payment endpoint:
 
 ## Where the data lives and how to share it
 
+Everything lives in Postgres, in tables the studio creates itself on first use:
+
 ```
-data/
-  projects/<projectId>.json     one file per project
-  endpoints/<endpointId>.json   one file per endpoint - fields, rules, scenarios, templates
-  users.json                    studio users (passwords are PBKDF2 hashes)
-  logs/requests.json            recent request logs (pruned to MOCK_LOG_RETENTION)
-```
-
-Writes are atomic (temp file + rename) and serialised per collection, so the files are always
-valid JSON. They are also perfectly hand-editable — the studio re-reads a file whenever its
-mtime changes.
-
-**Sharing with the team — git**
-
-The definitions are source code. Commit them:
-
-```bash
-git add data/projects data/endpoints
-git commit -m "sandbox: add NPSB fund transfer + NID verification mocks"
-git push
+projects        one row per project        (id, slug, data jsonb)
+endpoints       one row per endpoint        (id, project_id, method, path, data jsonb)
+studio_users    studio users                (id, username, data jsonb - passwords are PBKDF2 hashes)
+request_logs    recent request logs         (id, ts, project_id, endpoint_id, outcome, data jsonb)
 ```
 
-`.gitignore` already excludes `data/logs/` (runtime noise) and `.env*.local`. Do **not** commit
-`data/users.json` if the file contains real colleagues' hashes and the repo is public — put the
-data directory outside the repo with `MOCK_DATA_DIR` in that case.
+`data` holds the full record (fields, rules, scenarios, templates, ...); the plain columns
+next to it just exist for uniqueness and lookups. Endpoints cascade-delete with their project.
+Request logs are pruned to `MOCK_LOG_RETENTION` on every write. Set `DB_SCHEMA` to keep these
+tables in their own schema instead of `public` if the database is shared with another app.
 
-Teammate side: `git pull`, restart nothing — the studio picks the files up on the next read.
+Migrating from an older, file-based install? Point your database env vars at the new database
+(see [Environment variables](#environment-variables)) and run `npm run migrate:data` once — it
+copies `data/projects`, `data/endpoints` and `data/users.json` in, and is safe to re-run.
 
-**Sharing outside git — export / import**
+**Sharing with the team — export / import**
 
 From a project page, **Export** downloads a single file:
 
@@ -717,21 +716,20 @@ npm run build
 npm start          # port 3000; `npm start -- -p 8080` to change it
 ```
 
-Checklist for a shared/staging host:
+Checklist for a shared/staging host — including a serverless one like Vercel, where the
+filesystem is read-only and every write to plain files would fail:
 
 1. **Set `SESSION_SECRET`** to a long random value. Without it the app signs sessions with a
    public development secret.
-2. **Change the admin password** after the first login (or set `ADMIN_PASSWORD` before the
+2. **Provision Postgres and set `DATABASE_URL`.** Vercel Postgres/Neon, Supabase and RDS all
+   work — see [Where the data lives](#where-the-data-lives-and-how-to-share-it). Tables are
+   created automatically on first use.
+3. **Change the admin password** after the first login (or set `ADMIN_PASSWORD` before the
    first start, so the seeded user never has a known password).
-3. **Put the data directory on a persistent volume** and point `MOCK_DATA_DIR` at it —
-   `/var/lib/mock-api-studio`, a Docker volume, a mounted disk. If the process is redeployed
-   with an ephemeral filesystem, every registered mock is lost. Back it up with the same
-   policy as any other config store (or keep it in git).
-4. Run **one instance** per data directory. The store serialises its own writes in-process;
-   two processes writing the same folder can interleave.
-5. Serve it over **HTTPS** behind your reverse proxy — the session cookie is `httpOnly`,
-   `sameSite=lax` and `secure` in production, so plain HTTP will not keep you signed in.
-6. Remember the sandbox is a *stand-in*: it holds no real data and no real money, but the
+4. Serve it over **HTTPS** behind your reverse proxy (or Vercel's own TLS) — the session
+   cookie is `httpOnly`, `sameSite=lax` and `secure` in production, so plain HTTP will not
+   keep you signed in.
+5. Remember the sandbox is a *stand-in*: it holds no real data and no real money, but the
    payloads in its logs may still contain customer-like data. Keep it on the internal network.
 
 ---
@@ -749,8 +747,9 @@ src/
   components/            UI building blocks + toasts
   lib/
     types.ts             every domain type (single source of truth)
-    store.ts             projects + endpoints on disk
-    fsdb.ts              atomic JSON file helpers
+    store.ts             projects + endpoints in Postgres
+    db.ts                connection pool + schema bootstrap
+    lock.ts              in-process mutex used to serialise writes
     validation/          the rule catalog and the validation engine
     template.ts          {{token}} rendering
     scenario.ts          condition evaluation and scenario matching
@@ -760,9 +759,9 @@ src/
     auth.ts users.ts     studio sessions and accounts
     logs.ts              request log storage
   proxy.ts               guards the studio routes (Next.js 16 middleware)
-data/                    your registered mocks (see above)
+scripts/
+  migrate-file-data-to-postgres.mjs   one-time import from an older file-based install
 ```
 
-Built with Next.js 16 (App Router), React 19, TypeScript and Tailwind CSS v4 — and no runtime
-dependencies beyond those. Validation, templating, hashing and id generation are all
-hand-rolled, so the whole thing runs anywhere Node runs, offline.
+Built with Next.js 16 (App Router), React 19, TypeScript and Tailwind CSS v4, plus `pg` for
+Postgres access. Validation, templating, hashing and id generation are all hand-rolled.

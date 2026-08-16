@@ -1,21 +1,17 @@
 /**
  * Request log for the mock runtime.
  *
- * A single `data/logs/requests.json` array, newest first, pruned to
- * LOG_RETENTION on every append. Server only (touches `node:fs`).
+ * Rows in the `request_logs` table (see `@/lib/db`), newest first, pruned to
+ * `LOG_RETENTION` on every append. Server only (touches `pg`).
  */
 
-import fs from "node:fs/promises";
-import path from "node:path";
-
-import { ensureDataDirs, readJson, withLock, writeJson } from "@/lib/fsdb";
+import { ensureSchema, query } from "@/lib/db";
+import { withLock } from "@/lib/lock";
 import { newId } from "@/lib/ids";
-import { LOGS_DIR, LOG_RETENTION } from "@/lib/paths";
 import type { LogOutcome, RequestLog } from "@/lib/types";
 
-const LOGS_FILE = path.join(LOGS_DIR, "requests.json");
 const LOGS_LOCK = "logs:requests";
-/** Bodies larger than this are stored as a stub so the log file stays small. */
+/** Bodies larger than this are stored as a stub so the log table stays small. */
 const MAX_BODY_BYTES = 20 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const OUTCOMES: LogOutcome[] = [
@@ -26,69 +22,17 @@ const OUTCOMES: LogOutcome[] = [
   "disabled",
 ];
 
-interface LogsCache {
-  mtimeMs: number;
-  size: number;
-  value: RequestLog[];
-}
-
-let cached: LogsCache | null = null;
-let dirsReady: Promise<void> | null = null;
-
-/**
- * Best-effort directory setup. On a read-only deploy this can never succeed,
- * but `readJson`/`listJsonFiles` already fall back gracefully on their own,
- * so a failure here must not block a read. `writeJson` creates its own
- * parent directory right before writing regardless, so swallowing the error
- * here does not hide a real failure from an actual write attempt.
- */
-function ready(): Promise<void> {
-  if (!dirsReady) {
-    dirsReady = ensureDataDirs().catch(() => undefined);
-  }
-  return dirsReady;
-}
+/** How many request logs to keep (oldest pruned first). */
+const LOG_RETENTION = Number(process.env.MOCK_LOG_RETENTION ?? 500);
 
 function retention(): number {
   return Number.isFinite(LOG_RETENTION) && LOG_RETENTION > 0 ? Math.floor(LOG_RETENTION) : 500;
-}
-
-async function statSafe(file: string): Promise<{ mtimeMs: number; size: number } | null> {
-  try {
-    const stat = await fs.stat(file);
-    return { mtimeMs: stat.mtimeMs, size: stat.size };
-  } catch {
-    return null;
-  }
 }
 
 function isLog(value: unknown): value is RequestLog {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as { id?: unknown; ts?: unknown };
   return typeof record.id === "string" && typeof record.ts === "string";
-}
-
-/** Reads the whole log, reusing the parsed array while the file is untouched. */
-async function readAll(): Promise<RequestLog[]> {
-  await ready();
-  const stat = await statSafe(LOGS_FILE);
-  if (!stat) {
-    cached = null;
-    return [];
-  }
-  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.value;
-
-  const raw = await readJson<unknown>(LOGS_FILE, []);
-  const list: unknown[] = Array.isArray(raw) ? raw : [];
-  const value = list.filter(isLog);
-  cached = { mtimeMs: stat.mtimeMs, size: stat.size, value };
-  return value;
-}
-
-async function writeAll(list: RequestLog[]): Promise<void> {
-  await writeJson(LOGS_FILE, list);
-  const stat = await statSafe(LOGS_FILE);
-  cached = stat ? { mtimeMs: stat.mtimeMs, size: stat.size, value: list } : null;
 }
 
 /** Oversized payloads are replaced by `{ truncated: true, bytes }`. */
@@ -128,17 +72,33 @@ function normalizeEntry(entry: RequestLog): RequestLog {
 }
 
 /**
- * Appends one entry. Logging must never break a mock response, so every error
- * (a locked file, a full disk, ...) is swallowed.
+ * Appends one entry and prunes anything past the retention window. Logging
+ * must never break a mock response, so every error (lock contention, a
+ * dropped connection, ...) is swallowed.
  */
 export async function appendLog(entry: RequestLog): Promise<void> {
   try {
     await withLock(LOGS_LOCK, async () => {
-      const list = await readAll();
-      const next = [normalizeEntry(entry), ...list];
-      const max = retention();
-      if (next.length > max) next.length = max;
-      await writeAll(next);
+      await ensureSchema();
+      const normalized = normalizeEntry(entry);
+      await query(
+        `INSERT INTO request_logs (id, ts, project_id, endpoint_id, outcome, data)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          normalized.id,
+          normalized.ts,
+          normalized.projectId ?? null,
+          normalized.endpointId ?? null,
+          normalized.outcome ?? null,
+          JSON.stringify(normalized),
+        ],
+      );
+      await query(
+        `DELETE FROM request_logs WHERE id IN (
+           SELECT id FROM request_logs ORDER BY ts DESC OFFSET $1
+         )`,
+        [retention()],
+      );
     });
   } catch {
     /* logging is best effort */
@@ -153,20 +113,35 @@ export async function listLogs(
     limit?: number;
   } = {},
 ): Promise<RequestLog[]> {
-  const list = await readAll();
-  const matched = list.filter((log) => {
-    if (filter.projectId && log.projectId !== filter.projectId) return false;
-    if (filter.endpointId && log.endpointId !== filter.endpointId) return false;
-    if (filter.outcome && log.outcome !== filter.outcome) return false;
-    return true;
-  });
+  await ensureSchema();
 
-  const sorted = matched.slice().sort((a, b) => b.ts.localeCompare(a.ts));
-  const limit =
-    typeof filter.limit === "number" && Number.isFinite(filter.limit) && filter.limit > 0
-      ? Math.floor(filter.limit)
-      : sorted.length;
-  return sorted.slice(0, limit);
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (filter.projectId) {
+    params.push(filter.projectId);
+    clauses.push(`project_id = $${params.length}`);
+  }
+  if (filter.endpointId) {
+    params.push(filter.endpointId);
+    clauses.push(`endpoint_id = $${params.length}`);
+  }
+  if (filter.outcome) {
+    params.push(filter.outcome);
+    clauses.push(`outcome = $${params.length}`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+
+  let limitClause = "";
+  if (typeof filter.limit === "number" && Number.isFinite(filter.limit) && filter.limit > 0) {
+    params.push(Math.floor(filter.limit));
+    limitClause = `LIMIT $${params.length}`;
+  }
+
+  const rows = await query<{ data: unknown }>(
+    `SELECT data FROM request_logs ${where} ORDER BY ts DESC ${limitClause}`,
+    params,
+  );
+  return rows.map((row) => row.data).filter(isLog);
 }
 
 /** Removes matching entries (everything when no filter is given); returns how many went. */
@@ -174,21 +149,25 @@ export async function clearLogs(
   filter: { projectId?: string; endpointId?: string } = {},
 ): Promise<number> {
   return withLock(LOGS_LOCK, async () => {
-    const list = await readAll();
-    if (!filter.projectId && !filter.endpointId) {
-      await writeAll([]);
-      return list.length;
+    await ensureSchema();
+
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filter.projectId) {
+      params.push(filter.projectId);
+      clauses.push(`project_id = $${params.length}`);
     }
+    if (filter.endpointId) {
+      params.push(filter.endpointId);
+      clauses.push(`endpoint_id = $${params.length}`);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
 
-    const kept = list.filter((log) => {
-      const projectMatches = filter.projectId ? log.projectId === filter.projectId : true;
-      const endpointMatches = filter.endpointId ? log.endpointId === filter.endpointId : true;
-      return !(projectMatches && endpointMatches);
-    });
-
-    const removed = list.length - kept.length;
-    if (removed > 0) await writeAll(kept);
-    return removed;
+    const rows = await query<{ id: string }>(
+      `DELETE FROM request_logs ${where} RETURNING id`,
+      params,
+    );
+    return rows.length;
   });
 }
 
@@ -198,7 +177,10 @@ export async function logStats(): Promise<{
   failed24h: number;
   byOutcome: Record<string, number>;
 }> {
-  const list = await readAll();
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM request_logs");
+  const list = rows.map((row) => row.data).filter(isLog);
+
   const since = Date.now() - DAY_MS;
   const byOutcome: Record<string, number> = {};
   for (const outcome of OUTCOMES) byOutcome[outcome] = 0;

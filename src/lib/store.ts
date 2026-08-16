@@ -1,28 +1,16 @@
 /**
- * The registry: projects and endpoints, one JSON file per record.
+ * The registry: projects and endpoints, one row per record in Postgres
+ * (`projects`, `endpoints` - see `@/lib/db`).
  *
- *   data/projects/<id>.json
- *   data/endpoints/<id>.json
- *
- * Server only (touches `node:fs`). Parsed records are cached in memory and
- * invalidated by file mtime + size; every write refreshes the cache entry, so a
- * read that follows a write in the same process always sees the new value.
+ * Server only (touches `pg`). Files on disk (imported/exported JSON) are
+ * still treated as untrusted, hand-editable input - see the `hydrate*`
+ * functions below.
  */
 
-import fs from "node:fs/promises";
-import path from "node:path";
-
+import { ensureSchema, isUniqueViolation, query } from "@/lib/db";
+import { withLock } from "@/lib/lock";
 import { PROJECT_COLORS, newEndpoint, newProject } from "@/lib/defaults";
-import {
-  ensureDataDirs,
-  listJsonFiles,
-  readJson,
-  removeFile,
-  withLock,
-  writeJson,
-} from "@/lib/fsdb";
 import { newId, normalizePath, slugify } from "@/lib/ids";
-import { ENDPOINTS_DIR, PROJECTS_DIR } from "@/lib/paths";
 import { HTTP_METHODS } from "@/lib/types";
 import type {
   Condition,
@@ -54,74 +42,11 @@ export class StoreError extends Error {
 
 const PROJECTS_LOCK = "store:projects";
 const ENDPOINTS_LOCK = "store:endpoints";
-/** Record ids end up in a file name, so keep them boring. */
+/** Record ids double as a natural key elsewhere (exports, urls), so keep them boring. */
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
-let dirsReady: Promise<void> | null = null;
-
-/**
- * Best-effort directory setup. On a read-only deploy this can never succeed,
- * but `readJson`/`listJsonFiles` already fall back gracefully on their own,
- * so a failure here must not block a read. `writeJson` creates its own
- * parent directory right before writing regardless, so swallowing the error
- * here does not hide a real failure from an actual write attempt.
- */
-function ready(): Promise<void> {
-  if (!dirsReady) {
-    dirsReady = ensureDataDirs().catch(() => undefined);
-  }
-  return dirsReady;
-}
-
-interface CacheEntry {
-  mtimeMs: number;
-  size: number;
-  value: unknown;
-}
-
-const cache = new Map<string, CacheEntry>();
-
-async function statSafe(file: string): Promise<{ mtimeMs: number; size: number } | null> {
-  try {
-    const stat = await fs.stat(file);
-    return { mtimeMs: stat.mtimeMs, size: stat.size };
-  } catch {
-    return null;
-  }
-}
-
-async function readCached<T>(file: string, hydrate: (raw: unknown) => T | null): Promise<T | null> {
-  const stat = await statSafe(file);
-  if (!stat) {
-    cache.delete(file);
-    return null;
-  }
-  const hit = cache.get(file);
-  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.value as T;
-
-  const value = hydrate(await readJson<unknown>(file, null));
-  if (value === null) {
-    cache.delete(file);
-    return null;
-  }
-  cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, value });
-  return value;
-}
-
-async function writeRecord(file: string, value: unknown): Promise<void> {
-  await writeJson(file, value);
-  const stat = await statSafe(file);
-  if (stat) cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, value });
-  else cache.delete(file);
-}
-
-async function deleteRecord(file: string): Promise<void> {
-  await removeFile(file);
-  cache.delete(file);
-}
-
-function recordFile(dir: string, id: string): string | null {
-  return ID_PATTERN.test(id) ? path.join(dir, `${id}.json`) : null;
+function validId(id: string): string | null {
+  return ID_PATTERN.test(id) ? id : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -179,7 +104,8 @@ function requireText(value: unknown, label: string): string {
 }
 
 /* ------------------------------------------------------------------ *
- * Hydration - files on disk are hand editable, so treat them as untrusted
+ * Hydration - rows are hand editable (import, direct SQL), so treat them as
+ * untrusted the same way the old file-backed store treated JSON files.
  * ------------------------------------------------------------------ */
 
 function hydrateProject(raw: unknown): ProjectDef | null {
@@ -227,17 +153,15 @@ function hydrateEndpoint(raw: unknown): EndpointDef | null {
  * ------------------------------------------------------------------ */
 
 async function readAllProjects(): Promise<ProjectDef[]> {
-  await ready();
-  const files = await listJsonFiles(PROJECTS_DIR);
-  const records = await Promise.all(files.map((file) => readCached(file, hydrateProject)));
-  return records.filter((record): record is ProjectDef => record !== null);
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM projects");
+  return rows.map((row) => hydrateProject(row.data)).filter((p): p is ProjectDef => p !== null);
 }
 
 async function readAllEndpoints(): Promise<EndpointDef[]> {
-  await ready();
-  const files = await listJsonFiles(ENDPOINTS_DIR);
-  const records = await Promise.all(files.map((file) => readCached(file, hydrateEndpoint)));
-  return records.filter((record): record is EndpointDef => record !== null);
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM endpoints");
+  return rows.map((row) => hydrateEndpoint(row.data)).filter((e): e is EndpointDef => e !== null);
 }
 
 function methodRank(method: HttpMethod): number {
@@ -255,17 +179,23 @@ export async function listProjects(): Promise<ProjectDef[]> {
 }
 
 export async function getProject(id: string): Promise<ProjectDef | null> {
-  const file = recordFile(PROJECTS_DIR, str(id).trim());
-  if (!file) return null;
-  await ready();
-  return readCached(file, hydrateProject);
+  const recordId = validId(str(id).trim());
+  if (!recordId) return null;
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM projects WHERE id = $1", [
+    recordId,
+  ]);
+  return rows[0] ? hydrateProject(rows[0].data) : null;
 }
 
 export async function getProjectBySlug(slug: string): Promise<ProjectDef | null> {
   const wanted = slugify(str(slug));
   if (!wanted) return null;
-  const projects = await readAllProjects();
-  return projects.find((project) => project.slug === wanted) ?? null;
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM projects WHERE slug = $1", [
+    wanted,
+  ]);
+  return rows[0] ? hydrateProject(rows[0].data) : null;
 }
 
 export async function createProject(input: ProjectInput): Promise<ProjectDef> {
@@ -280,16 +210,16 @@ export async function createProject(input: ProjectInput): Promise<ProjectDef> {
     }
 
     const id = str(input.id).trim() || newId("pr");
-    const file = recordFile(PROJECTS_DIR, id);
-    if (!file) throw new StoreError("Invalid project id", 400);
-    if (existing.some((project) => project.id === id)) {
-      throw new StoreError(`Project "${id}" already exists`, 409);
+    const recordId = validId(id);
+    if (!recordId) throw new StoreError("Invalid project id", 400);
+    if (existing.some((project) => project.id === recordId)) {
+      throw new StoreError(`Project "${recordId}" already exists`, 409);
     }
 
     const now = new Date().toISOString();
     const project = newProject({
       ...input,
-      id,
+      id: recordId,
       name,
       slug,
       description: str(input.description),
@@ -299,16 +229,27 @@ export async function createProject(input: ProjectInput): Promise<ProjectDef> {
       updatedAt: now,
     });
 
-    await writeRecord(file, project);
+    try {
+      await query("INSERT INTO projects (id, slug, data) VALUES ($1, $2, $3)", [
+        project.id,
+        project.slug,
+        JSON.stringify(project),
+      ]);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new StoreError(`A project with the slug "${slug}" already exists`, 409);
+      }
+      throw error;
+    }
     return project;
   });
 }
 
 export async function updateProject(id: string, patch: Partial<ProjectDef>): Promise<ProjectDef> {
   return withLock(PROJECTS_LOCK, async () => {
-    const file = recordFile(PROJECTS_DIR, str(id).trim());
-    const current = file ? await readCached(file, hydrateProject) : null;
-    if (!file || !current) throw new StoreError("Project not found", 404);
+    const recordId = validId(str(id).trim());
+    const current = recordId ? await getProject(recordId) : null;
+    if (!recordId || !current) throw new StoreError("Project not found", 404);
 
     const clean = stripUndefined(patch);
     const name = "name" in clean ? requireText(clean.name, "Project name") : current.name;
@@ -337,28 +278,32 @@ export async function updateProject(id: string, patch: Partial<ProjectDef>): Pro
       updatedAt: new Date().toISOString(),
     };
 
-    await writeRecord(file, next);
+    try {
+      await query("UPDATE projects SET slug = $2, data = $3 WHERE id = $1", [
+        next.id,
+        next.slug,
+        JSON.stringify(next),
+      ]);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new StoreError(`A project with the slug "${slug}" already exists`, 409);
+      }
+      throw error;
+    }
     return next;
   });
 }
 
-/** Deletes the project and every endpoint that belongs to it. */
+/** Deletes the project and every endpoint that belongs to it (FK cascade). */
 export async function deleteProject(id: string): Promise<void> {
   await withLock(PROJECTS_LOCK, async () => {
-    const file = recordFile(PROJECTS_DIR, str(id).trim());
-    const current = file ? await readCached(file, hydrateProject) : null;
-    if (!file || !current) throw new StoreError("Project not found", 404);
+    const recordId = validId(str(id).trim());
+    const current = recordId ? await getProject(recordId) : null;
+    if (!recordId || !current) throw new StoreError("Project not found", 404);
 
     await withLock(ENDPOINTS_LOCK, async () => {
-      const endpoints = await readAllEndpoints();
-      for (const endpoint of endpoints) {
-        if (endpoint.projectId !== current.id) continue;
-        const endpointFile = recordFile(ENDPOINTS_DIR, endpoint.id);
-        if (endpointFile) await deleteRecord(endpointFile);
-      }
+      await query("DELETE FROM projects WHERE id = $1", [recordId]);
     });
-
-    await deleteRecord(file);
   });
 }
 
@@ -378,10 +323,13 @@ export async function listEndpoints(projectId?: string): Promise<EndpointDef[]> 
 }
 
 export async function getEndpoint(id: string): Promise<EndpointDef | null> {
-  const file = recordFile(ENDPOINTS_DIR, str(id).trim());
-  if (!file) return null;
-  await ready();
-  return readCached(file, hydrateEndpoint);
+  const recordId = validId(str(id).trim());
+  if (!recordId) return null;
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM endpoints WHERE id = $1", [
+    recordId,
+  ]);
+  return rows[0] ? hydrateEndpoint(rows[0].data) : null;
 }
 
 export async function createEndpoint(input: EndpointInput): Promise<EndpointDef> {
@@ -406,16 +354,16 @@ export async function createEndpoint(input: EndpointInput): Promise<EndpointDef>
     }
 
     const id = str(input.id).trim() || newId("ep");
-    const file = recordFile(ENDPOINTS_DIR, id);
-    if (!file) throw new StoreError("Invalid endpoint id", 400);
-    if (existing.some((endpoint) => endpoint.id === id)) {
-      throw new StoreError(`Endpoint "${id}" already exists`, 409);
+    const recordId = validId(id);
+    if (!recordId) throw new StoreError("Invalid endpoint id", 400);
+    if (existing.some((endpoint) => endpoint.id === recordId)) {
+      throw new StoreError(`Endpoint "${recordId}" already exists`, 409);
     }
 
     const now = new Date().toISOString();
     const endpoint = newEndpoint(project.id, {
       ...input,
-      id,
+      id: recordId,
       name: str(input.name).trim() || "Untitled endpoint",
       method,
       path: endpointPath,
@@ -423,7 +371,20 @@ export async function createEndpoint(input: EndpointInput): Promise<EndpointDef>
       updatedAt: now,
     });
 
-    await writeRecord(file, endpoint);
+    try {
+      await query(
+        "INSERT INTO endpoints (id, project_id, method, path, data) VALUES ($1, $2, $3, $4, $5)",
+        [endpoint.id, endpoint.projectId, endpoint.method, endpoint.path, JSON.stringify(endpoint)],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new StoreError(
+          `${method} ${endpointPath} is already registered in this project`,
+          409,
+        );
+      }
+      throw error;
+    }
     return endpoint;
   });
 }
@@ -433,9 +394,9 @@ export async function updateEndpoint(
   patch: Partial<EndpointDef>,
 ): Promise<EndpointDef> {
   return withLock(ENDPOINTS_LOCK, async () => {
-    const file = recordFile(ENDPOINTS_DIR, str(id).trim());
-    const current = file ? await readCached(file, hydrateEndpoint) : null;
-    if (!file || !current) throw new StoreError("Endpoint not found", 404);
+    const recordId = validId(str(id).trim());
+    const current = recordId ? await getEndpoint(recordId) : null;
+    if (!recordId || !current) throw new StoreError("Endpoint not found", 404);
 
     const clean = stripUndefined(patch);
     const projectId =
@@ -482,17 +443,30 @@ export async function updateEndpoint(
       updatedAt: new Date().toISOString(),
     };
 
-    await writeRecord(file, next);
+    try {
+      await query(
+        "UPDATE endpoints SET project_id = $2, method = $3, path = $4, data = $5 WHERE id = $1",
+        [next.id, next.projectId, next.method, next.path, JSON.stringify(next)],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new StoreError(
+          `${method} ${endpointPath} is already registered in this project`,
+          409,
+        );
+      }
+      throw error;
+    }
     return next;
   });
 }
 
 export async function deleteEndpoint(id: string): Promise<void> {
   await withLock(ENDPOINTS_LOCK, async () => {
-    const file = recordFile(ENDPOINTS_DIR, str(id).trim());
-    const current = file ? await readCached(file, hydrateEndpoint) : null;
-    if (!file || !current) throw new StoreError("Endpoint not found", 404);
-    await deleteRecord(file);
+    const recordId = validId(str(id).trim());
+    const current = recordId ? await getEndpoint(recordId) : null;
+    if (!recordId || !current) throw new StoreError("Endpoint not found", 404);
+    await query("DELETE FROM endpoints WHERE id = $1", [recordId]);
   });
 }
 
@@ -556,9 +530,9 @@ function cloneErrorTemplate(template: ErrorTemplate): ErrorTemplate {
 
 export async function duplicateEndpoint(id: string): Promise<EndpointDef> {
   return withLock(ENDPOINTS_LOCK, async () => {
-    const file = recordFile(ENDPOINTS_DIR, str(id).trim());
-    const source = file ? await readCached(file, hydrateEndpoint) : null;
-    if (!file || !source) throw new StoreError("Endpoint not found", 404);
+    const recordId = validId(str(id).trim());
+    const source = recordId ? await getEndpoint(recordId) : null;
+    if (!recordId || !source) throw new StoreError("Endpoint not found", 404);
 
     const existing = await readAllEndpoints();
     const taken = new Set(
@@ -575,9 +549,6 @@ export async function duplicateEndpoint(id: string): Promise<EndpointDef> {
     }
 
     const copyId = newId("ep");
-    const target = recordFile(ENDPOINTS_DIR, copyId);
-    if (!target) throw new StoreError("Could not allocate an endpoint id", 500);
-
     const now = new Date().toISOString();
     const copy: EndpointDef = {
       ...source,
@@ -594,7 +565,17 @@ export async function duplicateEndpoint(id: string): Promise<EndpointDef> {
       updatedAt: now,
     };
 
-    await writeRecord(target, copy);
+    try {
+      await query(
+        "INSERT INTO endpoints (id, project_id, method, path, data) VALUES ($1, $2, $3, $4, $5)",
+        [copy.id, copy.projectId, copy.method, copy.path, JSON.stringify(copy)],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new StoreError("Could not allocate a unique path for the copy", 409);
+      }
+      throw error;
+    }
     return copy;
   });
 }

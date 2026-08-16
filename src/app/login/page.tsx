@@ -105,15 +105,6 @@ export default function LoginPage() {
             <LoginForm />
           </Suspense>
         </Card>
-
-        {process.env.NODE_ENV !== "production" ? (
-          <p className="mt-4 text-center text-xs text-slate-400">
-            Default credentials:{" "}
-            <span className="font-mono text-slate-500">admin</span>
-            {" / "}
-            <span className="font-mono text-slate-500">Era@1234!!</span>
-          </p>
-        ) : null}
       </div>
     </main>
   );

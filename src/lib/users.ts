@@ -1,15 +1,15 @@
 /**
  * Studio users - the humans who sign in to Mock API Studio.
  *
- * Server only: this module reads and writes `data/users.json`. Never import it
- * from a `"use client"` component.
+ * Server only: this module reads and writes the `studio_users` table (see
+ * `@/lib/db`). Never import it from a `"use client"` component.
  */
 
 import crypto from "node:crypto";
 
-import { ensureDataDirs, readJson, withLock, writeJson } from "@/lib/fsdb";
+import { ensureSchema, isUniqueViolation, query } from "@/lib/db";
+import { withLock } from "@/lib/lock";
 import { newId } from "@/lib/ids";
-import { USERS_FILE } from "@/lib/paths";
 import type { StudioUser, UserRole } from "@/lib/types";
 
 const PBKDF2_ITERATIONS = 120_000;
@@ -17,7 +17,7 @@ const PBKDF2_KEY_LENGTH = 64;
 const PBKDF2_DIGEST = "sha512";
 const SALT_BYTES = 16;
 
-/** Every write to users.json goes through this lock key. */
+/** Every write to the users table goes through this lock key. */
 const USERS_LOCK = "users";
 
 const MIN_PASSWORD_LENGTH = 6;
@@ -104,26 +104,21 @@ function sortUsers(users: StudioUser[]): StudioUser[] {
 }
 
 async function readUsers(): Promise<StudioUser[]> {
-  const raw = await readJson<unknown>(USERS_FILE, []);
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(isStudioUser);
-}
-
-async function writeUsers(users: StudioUser[]): Promise<void> {
-  await ensureDataDirs();
-  await writeJson(USERS_FILE, users);
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>("SELECT data FROM studio_users");
+  return rows.map((row) => row.data).filter(isStudioUser);
 }
 
 /* ------------------------------------------------------------------ *
  * Seed
  * ------------------------------------------------------------------ */
 
-/** Flips once the file is known to hold at least one user. */
+/** Flips once the table is known to hold at least one user. */
 let seeded = false;
 
 /**
- * Creates `data/users.json` with a single admin on first run. Cheap enough to
- * call on every request, and locked so concurrent boots cannot race.
+ * Creates the first admin user on first run. Cheap enough to call on every
+ * request, and locked so concurrent boots cannot race.
  */
 export async function ensureSeedUser(): Promise<void> {
   if (seeded) return;
@@ -146,7 +141,15 @@ export async function ensureSeedUser(): Promise<void> {
       passwordHash: hashPassword(password),
       createdAt: new Date().toISOString(),
     };
-    await writeUsers([admin]);
+    try {
+      await query("INSERT INTO studio_users (id, username, data) VALUES ($1, $2, $3)", [
+        admin.id,
+        admin.username,
+        JSON.stringify(admin),
+      ]);
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+    }
     seeded = true;
   });
 }
@@ -162,8 +165,12 @@ export async function listUsers(): Promise<StudioUser[]> {
 export async function getUserByUsername(u: string): Promise<StudioUser | null> {
   const wanted = normalizeUsername(u ?? "");
   if (!wanted) return null;
-  const users = await readUsers();
-  return users.find((user) => normalizeUsername(user.username) === wanted) ?? null;
+  await ensureSchema();
+  const rows = await query<{ data: unknown }>(
+    "SELECT data FROM studio_users WHERE username = $1",
+    [wanted],
+  );
+  return isStudioUser(rows[0]?.data) ? rows[0].data : null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -193,8 +200,8 @@ export async function createUser(input: {
   const passwordHash = hashPassword(input.password);
 
   return withLock(USERS_LOCK, async () => {
-    const users = await readUsers();
-    if (users.some((user) => normalizeUsername(user.username) === username)) {
+    const existing = await getUserByUsername(username);
+    if (existing) {
       throw new Error(`Username "${username}" is already taken.`);
     }
     const user: StudioUser = {
@@ -205,7 +212,18 @@ export async function createUser(input: {
       passwordHash,
       createdAt: new Date().toISOString(),
     };
-    await writeUsers([...users, user]);
+    try {
+      await query("INSERT INTO studio_users (id, username, data) VALUES ($1, $2, $3)", [
+        user.id,
+        user.username,
+        JSON.stringify(user),
+      ]);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new Error(`Username "${username}" is already taken.`);
+      }
+      throw error;
+    }
     seeded = true;
     return user;
   });
@@ -222,7 +240,7 @@ export async function deleteUser(id: string): Promise<void> {
     ) {
       throw new Error("Cannot delete the last admin user.");
     }
-    await writeUsers(users.filter((user) => user.id !== id));
+    await query("DELETE FROM studio_users WHERE id = $1", [id]);
   });
 }
 
@@ -233,11 +251,10 @@ export async function setPassword(id: string, password: string): Promise<void> {
   const passwordHash = hashPassword(password);
   await withLock(USERS_LOCK, async () => {
     const users = await readUsers();
-    const index = users.findIndex((user) => user.id === id);
-    if (index === -1) throw new Error("User not found.");
-    const next = [...users];
-    next[index] = { ...users[index], passwordHash };
-    await writeUsers(next);
+    const current = users.find((user) => user.id === id);
+    if (!current) throw new Error("User not found.");
+    const next: StudioUser = { ...current, passwordHash };
+    await query("UPDATE studio_users SET data = $2 WHERE id = $1", [id, JSON.stringify(next)]);
   });
 }
 
