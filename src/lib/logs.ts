@@ -178,26 +178,30 @@ export async function logStats(): Promise<{
   byOutcome: Record<string, number>;
 }> {
   await ensureSchema();
-  const rows = await query<{ data: unknown }>("SELECT data FROM request_logs");
-  const list = rows.map((row) => row.data).filter(isLog);
+  // Aggregate in SQL - pulling every row's JSONB (bodies included) just to
+  // count it shipped megabytes across the wire on each dashboard load.
+  const rows = await query<{ outcome: string; total: number; last24h: number }>(
+    `SELECT COALESCE(outcome, 'matched') AS outcome,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE ts >= $1)::int AS last24h
+     FROM request_logs
+     GROUP BY 1`,
+    [new Date(Date.now() - DAY_MS).toISOString()],
+  );
 
-  const since = Date.now() - DAY_MS;
   const byOutcome: Record<string, number> = {};
   for (const outcome of OUTCOMES) byOutcome[outcome] = 0;
 
+  let total = 0;
   let last24h = 0;
   let failed24h = 0;
 
-  for (const log of list) {
-    const outcome = typeof log.outcome === "string" ? log.outcome : "matched";
-    byOutcome[outcome] = (byOutcome[outcome] ?? 0) + 1;
-
-    const at = Date.parse(log.ts);
-    if (Number.isFinite(at) && at >= since) {
-      last24h += 1;
-      if (outcome !== "matched") failed24h += 1;
-    }
+  for (const row of rows) {
+    byOutcome[row.outcome] = (byOutcome[row.outcome] ?? 0) + row.total;
+    total += row.total;
+    last24h += row.last24h;
+    if (row.outcome !== "matched") failed24h += row.last24h;
   }
 
-  return { total: list.length, last24h, failed24h, byOutcome };
+  return { total, last24h, failed24h, byOutcome };
 }

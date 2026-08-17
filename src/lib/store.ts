@@ -158,9 +158,13 @@ async function readAllProjects(): Promise<ProjectDef[]> {
   return rows.map((row) => hydrateProject(row.data)).filter((p): p is ProjectDef => p !== null);
 }
 
-async function readAllEndpoints(): Promise<EndpointDef[]> {
+async function readAllEndpoints(projectId?: string): Promise<EndpointDef[]> {
   await ensureSchema();
-  const rows = await query<{ data: unknown }>("SELECT data FROM endpoints");
+  const rows = projectId
+    ? await query<{ data: unknown }>("SELECT data FROM endpoints WHERE project_id = $1", [
+        projectId,
+      ])
+    : await query<{ data: unknown }>("SELECT data FROM endpoints");
   return rows.map((row) => hydrateEndpoint(row.data)).filter((e): e is EndpointDef => e !== null);
 }
 
@@ -312,12 +316,9 @@ export async function deleteProject(id: string): Promise<void> {
  * ------------------------------------------------------------------ */
 
 export async function listEndpoints(projectId?: string): Promise<EndpointDef[]> {
-  const endpoints = await readAllEndpoints();
   const wanted = str(projectId).trim();
-  const filtered = wanted
-    ? endpoints.filter((endpoint) => endpoint.projectId === wanted)
-    : endpoints;
-  return filtered.sort(
+  const endpoints = await readAllEndpoints(wanted || undefined);
+  return endpoints.sort(
     (a, b) => a.path.localeCompare(b.path) || methodRank(a.method) - methodRank(b.method),
   );
 }

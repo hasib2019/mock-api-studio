@@ -160,9 +160,20 @@ function schemaStatements(schema: string): string[] {
 
 let schemaReady: Promise<void> | null = null;
 
-/** Creates the schema (if any) and every table/index used by the studio; safe to call repeatedly. */
+/**
+ * Creates the schema (if any) and every table/index used by the studio; safe to call repeatedly.
+ *
+ * Set `DB_SCHEMA_READY=1` once the tables exist (i.e. after the first deploy)
+ * to skip the bootstrap entirely. On serverless every cold start otherwise
+ * pays ~10 sequential round trips re-asserting `CREATE ... IF NOT EXISTS`.
+ */
 export function ensureSchema(): Promise<void> {
   if (!schemaReady) {
+    const ready = (env("DB_SCHEMA_READY") ?? "").toLowerCase();
+    if (ready === "1" || ready === "true") {
+      schemaReady = Promise.resolve();
+      return schemaReady;
+    }
     schemaReady = (async () => {
       const pool = getPool();
       for (const statement of schemaStatements(resolveSchemaName())) {

@@ -13,7 +13,7 @@
  *   - logging is best effort and can never change or break the response.
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { isStructuredContentType } from "@/lib/content-type";
 import {
@@ -578,32 +578,36 @@ async function respond(input: RespondInput): Promise<Response> {
   const isHead = input.facts.method === "HEAD";
   if (isHead) headers.set("content-length", String(Buffer.byteLength(text, "utf8")));
 
-  try {
-    await appendLog({
-      id: newId("log"),
-      ts: new Date().toISOString(),
-      projectId: input.project?.id ?? null,
-      projectSlug: input.project?.slug ?? null,
-      endpointId: input.endpoint?.id ?? null,
-      endpointName: input.endpoint?.name ?? null,
-      method: input.facts.method,
-      path: input.facts.path,
-      url: input.facts.url,
-      status: input.status,
-      durationMs,
-      outcome: input.outcome,
-      scenarioId: input.scenario?.id ?? null,
-      scenarioName: input.scenario?.name ?? null,
-      requestHeaders: input.facts.requestHeaders,
-      requestQuery: input.facts.requestQuery,
-      requestBody: input.requestBody,
-      responseBody: input.body,
-      issues: input.issues,
-      ip: input.facts.ip,
-    });
-  } catch {
-    /* a broken log must never break the mock */
-  }
+  // Logging happens after the response has been sent (`waitUntil` on Vercel),
+  // so the caller never waits on the log INSERT + retention prune.
+  after(async () => {
+    try {
+      await appendLog({
+        id: newId("log"),
+        ts: new Date().toISOString(),
+        projectId: input.project?.id ?? null,
+        projectSlug: input.project?.slug ?? null,
+        endpointId: input.endpoint?.id ?? null,
+        endpointName: input.endpoint?.name ?? null,
+        method: input.facts.method,
+        path: input.facts.path,
+        url: input.facts.url,
+        status: input.status,
+        durationMs,
+        outcome: input.outcome,
+        scenarioId: input.scenario?.id ?? null,
+        scenarioName: input.scenario?.name ?? null,
+        requestHeaders: input.facts.requestHeaders,
+        requestQuery: input.facts.requestQuery,
+        requestBody: input.requestBody,
+        responseBody: input.body,
+        issues: input.issues,
+        ip: input.facts.ip,
+      });
+    } catch {
+      /* a broken log must never break the mock */
+    }
+  });
 
   return new NextResponse(isHead ? null : text, { status: input.status, headers });
 }
